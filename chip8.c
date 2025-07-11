@@ -1,8 +1,11 @@
 // http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
-#include <SDL2/SDL.h>
+// TODO: keyboard
+// TODO: buzzer
+#include <raylib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define READ_INS()                                                             \
   uint8_t low = c->memory[c->pc++];                                            \
@@ -200,6 +203,13 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
 
 void chip8_step(CHIP8 *c) {
   do {
+    if (c->delay_timer > 0) {
+      c->delay_timer--;
+    }
+    if (c->sound_timer > 0) {
+      c->sound_timer--;
+    }
+
     READ_INS();
 
     switch ((ins >> 12) & 0xF) {
@@ -213,7 +223,9 @@ void chip8_step(CHIP8 *c) {
         c->sp--;
         break;
       default:
-        c->pc = nnn;
+        // >This instruction is only used on the old computers on which Chip-8
+        // >was originally implemented. It is ignored by modern interpreters.
+        break;
       }
     } break;
     case 0x1: {
@@ -394,33 +406,25 @@ int main(int argc, char *argv[]) {
     c.memory[0x200 + i] = buffer[i];
   }
 
-  SDL_Init(SDL_INIT_VIDEO);
-  SDL_Window *window =
-      SDL_CreateWindow("CHIP-8", SDL_WINDOWPOS_UNDEFINED,
-                       SDL_WINDOWPOS_UNDEFINED, 640, 320, SDL_WINDOW_SHOWN);
-  SDL_Surface *surface = SDL_GetWindowSurface(window);
+  InitWindow(640, 320, "CHIP-8");
+  SetTargetFPS(60);
 
-  while (1) {
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-      if (e.type == SDL_QUIT) {
-        return 0;
-      }
+  while (!WindowShouldClose()) {
+    for (int i = 0; i < 25; i++) {
+      chip8_step(&c);
     }
 
-    chip8_step(&c);
+    BeginDrawing();
 
-    SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 0xFF, 0xFF, 0xFF));
+    ClearBackground(WHITE);
     for (size_t y = 0; y < 32; y++) {
       for (size_t x = 0; x < 64; x++) {
         if (c.display[x + y * 64] == 1) {
-          SDL_Rect rect = {x * 10, y * 10, 10, 10};
-          SDL_FillRect(surface, &rect,
-                       SDL_MapRGB(surface->format, 0x00, 0x00, 0x00));
+          DrawRectangle(x * 10, y * 10, 10, 10, BLACK);
         }
       }
     }
 
-    SDL_UpdateWindowSurface(window);
+    EndDrawing();
   }
 }
