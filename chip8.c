@@ -59,6 +59,8 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
   for (size_t i = 0; i < ins_count; i++) {
     READ_INS();
 
+    printf("0x%x: ", c->pc);
+
     switch ((ins >> 12) & 0xF) {
     case 0x0: {
       switch (nnn) {
@@ -73,7 +75,7 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
       }
     } break;
     case 0x1: {
-      printf("JP %u\n", nnn);
+      printf("JP 0x%x\n", nnn);
     } break;
     case 0x2: {
       printf("CALL %u\n", nnn);
@@ -130,7 +132,7 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
       printf("SNE V%x, V%x\n", x, y);
     } break;
     case 0xA: {
-      printf("LD I, %u\n", nnn);
+      printf("LD I, 0x%x\n", nnn);
     } break;
     case 0xB: {
       printf("JP V0, %u\n", nnn);
@@ -253,20 +255,26 @@ void chip8_execute(CHIP8 *c) {
       case 0x3:
         c->reg[x] ^= c->reg[y];
         break;
-      case 0x4:
-        printf("TODO: ADD V%x, V%x\n", x, y);
-        break;
+      case 0x4: {
+        uint16_t res = (uint16_t)(c->reg[x]) + (uint16_t)c->reg[y];
+        c->reg[0xF] = res > 0xFF;
+        c->reg[x] = (uint8_t)(res & 0xFF);
+      } break;
       case 0x5:
-        printf("TODO: SUB V%x, V%x\n", x, y);
+        c->reg[0xF] = c->reg[x] > c->reg[y];
+        c->reg[x] -= c->reg[y];
         break;
       case 0x6:
-        printf("TODO: SHR V%x\n", x);
+        c->reg[0xF] = c->reg[x] & 0x1;
+        c->reg[x] >>= 1;
         break;
       case 0x7:
-        printf("TODO: SUBN V%x, V%x\n", x, y);
+        c->reg[0xF] = c->reg[y] > c->reg[x];
+        c->reg[x] = c->reg[y] - c->reg[x];
         break;
       case 0xE:
-        printf("TODO: SHL V%x\n", x);
+        c->reg[0xF] = (c->reg[x] & 0b10000000) >> 7;
+        c->reg[x] <<= 1;
         break;
       default:
         BAD_INS();
@@ -319,7 +327,7 @@ void chip8_execute(CHIP8 *c) {
         c->I += c->reg[x];
         break;
       case 0x29:
-        printf("TODO: LD F, V%x\n", x);
+        c->I = c->reg[x] * 5;
         break;
       case 0x33:
         c->memory[c->I] = c->reg[x] / 100;
@@ -327,10 +335,14 @@ void chip8_execute(CHIP8 *c) {
         c->memory[c->I + 2] = c->reg[x] % 10;
         break;
       case 0x55:
-        printf("TODO: LD [I], V%x\n", x);
+        for (size_t i = 0; i <= x; i++) {
+          c->memory[c->I + i] = c->reg[i];
+        }
         break;
       case 0x65:
-        printf("TODO: LD V%x, [I]\n", x);
+        for (size_t i = 0; i <= x; i++) {
+          c->reg[i] = c->memory[c->I + i];
+        }
         break;
       default:
         BAD_INS();
@@ -361,6 +373,7 @@ int main(int argc, char *argv[]) {
     c.memory[0x200 + i] = buffer[i];
   }
 
+  // chip8_disassemble(&c, n / 2);
   chip8_execute(&c);
 
   chip8_free(c);
