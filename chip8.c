@@ -1,4 +1,5 @@
 // http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
+#include <SDL2/SDL.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +27,8 @@ typedef struct CHIP8 {
   uint16_t I;
   uint8_t delay_timer;
   uint8_t sound_timer;
+  uint8_t keyboard[16];
+  uint8_t *display;
 } CHIP8;
 
 CHIP8 chip8_create() {
@@ -49,6 +52,7 @@ CHIP8 chip8_create() {
   };
   CHIP8 c = {0};
   c.memory = calloc(1, 4096);
+  c.display = calloc(1, 64 * 32);
   for (size_t i = 0; i < 80; i++)
     c.memory[i] = fonts[i];
   c.pc = 0x200;
@@ -194,15 +198,15 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
   }
 }
 
-void chip8_execute(CHIP8 *c) {
-  while (1) {
+void chip8_step(CHIP8 *c) {
+  do {
     READ_INS();
 
     switch ((ins >> 12) & 0xF) {
     case 0x0: {
       switch (nnn) {
       case 0x0E0:
-        puts("TODO: CLS");
+        memset(c->display, 0, 64 * 32);
         break;
       case 0x0EE:
         c->pc = c->stack[c->sp];
@@ -295,7 +299,21 @@ void chip8_execute(CHIP8 *c) {
       c->reg[x] = (rand() % 256) & kk;
     } break;
     case 0xD: {
-      printf("TODO: DRW V%x, V%x, %u\n", x, y, n);
+      c->reg[0xF] = 0;
+      for (size_t row = 0; row < n; row++) {
+        for (int col = 0; col < 8; col++) {
+          if ((c->memory[c->I + row] & (0b10000000 >> col)) != 0) {
+            size_t pixel_x = (c->reg[x] + col) % 64;
+            size_t pixel_y = (c->reg[y] + row) % 32;
+            size_t offset = pixel_x + (pixel_y * 64);
+
+            if (c->display[offset] == 1) {
+              c->reg[0xF] = 1;
+            }
+            c->display[offset] ^= 1;
+          }
+        }
+      }
     } break;
     case 0xE: {
       switch (kk) {
@@ -351,10 +369,13 @@ void chip8_execute(CHIP8 *c) {
     default:
       BAD_INS();
     }
-  }
+  } while (0);
 }
 
-void chip8_free(CHIP8 c) { free(c.memory); }
+void chip8_free(CHIP8 c) {
+  free(c.memory);
+  free(c.display);
+}
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
@@ -373,8 +394,33 @@ int main(int argc, char *argv[]) {
     c.memory[0x200 + i] = buffer[i];
   }
 
-  // chip8_disassemble(&c, n / 2);
-  chip8_execute(&c);
+  SDL_Init(SDL_INIT_VIDEO);
+  SDL_Window *window =
+      SDL_CreateWindow("CHIP-8", SDL_WINDOWPOS_UNDEFINED,
+                       SDL_WINDOWPOS_UNDEFINED, 640, 320, SDL_WINDOW_SHOWN);
+  SDL_Surface *surface = SDL_GetWindowSurface(window);
 
-  chip8_free(c);
+  while (1) {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+      if (e.type == SDL_QUIT) {
+        return 0;
+      }
+    }
+
+    chip8_step(&c);
+
+    SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 0xFF, 0xFF, 0xFF));
+    for (size_t y = 0; y < 32; y++) {
+      for (size_t x = 0; x < 64; x++) {
+        if (c.display[x + y * 64] == 1) {
+          SDL_Rect rect = {x * 10, y * 10, 10, 10};
+          SDL_FillRect(surface, &rect,
+                       SDL_MapRGB(surface->format, 0x00, 0x00, 0x00));
+        }
+      }
+    }
+
+    SDL_UpdateWindowSurface(window);
+  }
 }
