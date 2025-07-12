@@ -1,5 +1,4 @@
 // http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
-// TODO: keyboard
 // TODO: buzzer
 #include <raylib.h>
 #include <stdint.h>
@@ -20,6 +19,11 @@
 #define BAD_INS()                                                              \
   fprintf(stderr, "unrecognized instruction\n");                               \
   exit(1)
+
+static const uint8_t keyboard_map[] = {KEY_ONE,  KEY_TWO, KEY_THREE, KEY_FOUR,
+                                       KEY_FIVE, KEY_SIX, KEY_SEVEN, KEY_EIGHT,
+                                       KEY_NINE, KEY_Q,   KEY_W,     KEY_E,
+                                       KEY_R,    KEY_T,   KEY_Y,     KEY_U};
 
 typedef struct CHIP8 {
   uint8_t *memory;
@@ -330,10 +334,14 @@ void chip8_step(CHIP8 *c) {
     case 0xE: {
       switch (kk) {
       case 0x9E:
-        printf("TODO: SKP V%x\n", x);
+        if (IsKeyDown(keyboard_map[c->reg[x]])) {
+          c->pc += 2;
+        }
         break;
       case 0xA1:
-        printf("TODO: SKNP V%x\n", x);
+        if (!IsKeyDown(keyboard_map[c->reg[x]])) {
+          c->pc += 2;
+        }
         break;
       default:
         BAD_INS();
@@ -344,9 +352,17 @@ void chip8_step(CHIP8 *c) {
       case 0x07:
         c->reg[x] = c->delay_timer;
         break;
-      case 0x0A:
-        printf("TODO: LD V%x, K\n", x);
-        break;
+      case 0x0A: {
+        bool key_pressed = false;
+        while (!key_pressed && WindowShouldClose()) {
+          for (size_t i = 0; i < 16; i++) {
+            if (IsKeyDown(keyboard_map[i])) {
+              key_pressed = true;
+              break;
+            }
+          }
+        }
+      } break;
       case 0x15:
         c->delay_timer = c->reg[x];
         break;
