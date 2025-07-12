@@ -12,47 +12,119 @@
 typedef struct MOS6502 {
   uint8_t *memory;
   uint16_t pc;
-  uint8_t A;
-  uint8_t X;
-  uint8_t Y;
-  uint8_t SP;
-  uint8_t P;
+  // TODO
+  // uint8_t A;
+  // uint8_t X;
+  // uint8_t Y;
+  // uint8_t SP;
+  // uint8_t P;
 } MOS6502;
 
 MOS6502 mos6502_create() {
   MOS6502 m = {0};
   m.pc = 0x600;
-  m.memory = malloc(1 << 16);
+  m.memory = calloc(1, 1 << 16);
   return m;
 }
 
 void mos6502_disassemble(MOS6502 *m, size_t ins_count) {
   for (size_t i = 0; i < ins_count; i++) {
+    printf("%04X: ", m->pc);
+
     uint8_t op = m->memory[m->pc++];
     switch (op) {
     case 0x00: {
       printf("BRK\n");
     } break;
+    case 0x18: {
+      printf("CLC\n");
+    } break;
+    case 0x20: {
+      READ_ADDR();
+      printf("JSR $%04X\n", addr);
+    } break;
+    case 0x38: {
+      printf("SEC\n");
+    } break;
     case 0x4C: {
       READ_ADDR();
-      printf("JMP $%X\n", addr);
+      printf("JMP $%04X\n", addr);
+    } break;
+    case 0x60: {
+      printf("RTS\n");
+    } break;
+    case 0x69: {
+      printf("ADC #$%02X\n", m->memory[m->pc++]);
+    } break;
+    case 0x85: {
+      printf("STA #$%02X\n", m->memory[m->pc++]);
+    } break;
+    case 0x8C: {
+      READ_ADDR();
+      printf("STY $%04X\n", addr);
     } break;
     case 0x8D: {
       READ_ADDR();
-      printf("STA $%X\n", addr);
+      printf("STA $%04X\n", addr);
+    } break;
+    case 0x8E: {
+      READ_ADDR();
+      printf("STX $%04X\n", addr);
+    } break;
+    case 0x90: {
+      int8_t offset = m->memory[m->pc++];
+      printf("BCC $%04X\n", m->pc + offset);
+    } break;
+    case 0x99: {
+      READ_ADDR();
+      printf("STA $%04X,Y\n", addr);
+    } break;
+    case 0xA0: {
+      printf("LDY #$%02X\n", m->memory[m->pc++]);
     } break;
     case 0xA2: {
-      printf("LDX #$%X\n", m->memory[m->pc++]);
+      printf("LDX #$%02X\n", m->memory[m->pc++]);
+    } break;
+    case 0xA9: {
+      printf("LDA #$%02X\n", m->memory[m->pc++]);
+    } break;
+    case 0xAD: {
+      READ_ADDR();
+      printf("LDA $%04X\n", addr);
+    } break;
+    case 0xB0: {
+      int8_t offset = m->memory[m->pc++];
+      printf("BCS $%04X\n", m->pc + offset);
+    } break;
+    case 0xB1: {
+      printf("LDA (#$%02X),Y\n", m->memory[m->pc++]);
     } break;
     case 0xBD: {
       READ_ADDR();
-      printf("LDA $%X,X\n", addr);
+      printf("LDA $%04X,X\n", addr);
+    } break;
+    case 0xC8: {
+      printf("INY\n");
+    } break;
+    case 0xC9: {
+      printf("CMP #$%02X\n", m->memory[m->pc++]);
+    } break;
+    case 0xD0: {
+      int8_t offset = m->memory[m->pc++];
+      printf("BNE $%04X\n", m->pc + offset);
+    } break;
+    case 0xE0: {
+      printf("CPX #$%02X\n", m->memory[m->pc++]);
     } break;
     case 0xE8: {
       printf("INX\n");
     } break;
+    case 0xE9: {
+      printf("SBC #$%02X\n", m->memory[m->pc++]);
+    } break;
     case 0xF0: {
-      printf("BEQ %d\n", m->memory[m->pc++]);
+      int8_t offset = m->memory[m->pc++];
+      printf("BEQ $%04X\n", m->pc + offset);
     } break;
     default:
       fprintf(stderr, "unrecognized opcode: %x\n", op);
@@ -60,6 +132,8 @@ void mos6502_disassemble(MOS6502 *m, size_t ins_count) {
     }
   }
 }
+
+void mos6502_free(MOS6502 m) { free(m.memory); }
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
@@ -78,5 +152,7 @@ int main(int argc, char *argv[]) {
     m.memory[0x600 + i] = buffer[i];
   }
 
-  mos6502_disassemble(&m, 7);
+  mos6502_disassemble(&m, 103);
+
+  mos6502_free(m);
 }
