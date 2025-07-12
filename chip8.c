@@ -1,5 +1,4 @@
 // http://devernay.free.fr/hacks/chip8/C8TECH10.HTM
-// TODO: buzzer
 #include <raylib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -68,9 +67,9 @@ CHIP8 chip8_create() {
 
 void chip8_disassemble(CHIP8 *c, size_t ins_count) {
   for (size_t i = 0; i < ins_count; i++) {
-    READ_INS();
-
     printf("0x%x: ", c->pc);
+
+    READ_INS();
 
     switch ((ins >> 12) & 0xF) {
     case 0x0: {
@@ -212,6 +211,7 @@ void chip8_step(CHIP8 *c) {
     }
     if (c->sound_timer > 0) {
       c->sound_timer--;
+      // TODO: buzzer
     }
 
     READ_INS();
