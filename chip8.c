@@ -205,199 +205,189 @@ void chip8_disassemble(CHIP8 *c, size_t ins_count) {
 }
 
 void chip8_step(CHIP8 *c) {
-  do {
-    if (c->delay_timer > 0) {
-      c->delay_timer--;
-    }
-    if (c->sound_timer > 0) {
-      c->sound_timer--;
-      // TODO: buzzer
-    }
+  READ_INS();
 
-    READ_INS();
-
-    switch ((ins >> 12) & 0xF) {
-    case 0x0: {
-      switch (nnn) {
-      case 0x0E0:
-        memset(c->display, 0, 64 * 32);
-        break;
-      case 0x0EE:
-        c->pc = c->stack[c->sp];
-        c->sp--;
-        break;
-      default:
-        // >This instruction is only used on the old computers on which Chip-8
-        // >was originally implemented. It is ignored by modern interpreters.
-        break;
-      }
-    } break;
-    case 0x1: {
-      c->pc = nnn;
-    } break;
-    case 0x2: {
-      c->sp++;
-      c->stack[c->sp] = c->pc;
-      c->pc = nnn;
-    } break;
-    case 0x3: {
-      if (c->reg[x] == kk) {
-        c->pc += 2;
-      }
-    } break;
+  switch ((ins >> 12) & 0xF) {
+  case 0x0: {
+    switch (nnn) {
+    case 0x0E0:
+      memset(c->display, 0, 64 * 32);
+      break;
+    case 0x0EE:
+      c->pc = c->stack[c->sp];
+      c->sp--;
+      break;
+    default:
+      // >This instruction is only used on the old computers on which Chip-8
+      // >was originally implemented. It is ignored by modern interpreters.
+      break;
+    }
+  } break;
+  case 0x1: {
+    c->pc = nnn;
+  } break;
+  case 0x2: {
+    c->sp++;
+    c->stack[c->sp] = c->pc;
+    c->pc = nnn;
+  } break;
+  case 0x3: {
+    if (c->reg[x] == kk) {
+      c->pc += 2;
+    }
+  } break;
+  case 0x4: {
+    if (c->reg[x] != kk) {
+      c->pc += 2;
+    }
+  } break;
+  case 0x5: {
+    if (c->reg[x] == c->reg[y]) {
+      c->pc += 2;
+    }
+  } break;
+  case 0x6: {
+    c->reg[x] = kk;
+  } break;
+  case 0x7: {
+    c->reg[x] += kk;
+  } break;
+  case 0x8: {
+    switch (n) {
+    case 0x0:
+      c->reg[x] = c->reg[y];
+      break;
+    case 0x1:
+      c->reg[x] |= c->reg[y];
+      break;
+    case 0x2:
+      c->reg[x] &= c->reg[y];
+      break;
+    case 0x3:
+      c->reg[x] ^= c->reg[y];
+      break;
     case 0x4: {
-      if (c->reg[x] != kk) {
-        c->pc += 2;
-      }
+      uint16_t res = (uint16_t)(c->reg[x]) + (uint16_t)c->reg[y];
+      c->reg[0xF] = res > 0xFF;
+      c->reg[x] = (uint8_t)(res & 0xFF);
     } break;
-    case 0x5: {
-      if (c->reg[x] == c->reg[y]) {
-        c->pc += 2;
-      }
-    } break;
-    case 0x6: {
-      c->reg[x] = kk;
-    } break;
-    case 0x7: {
-      c->reg[x] += kk;
-    } break;
-    case 0x8: {
-      switch (n) {
-      case 0x0:
-        c->reg[x] = c->reg[y];
-        break;
-      case 0x1:
-        c->reg[x] |= c->reg[y];
-        break;
-      case 0x2:
-        c->reg[x] &= c->reg[y];
-        break;
-      case 0x3:
-        c->reg[x] ^= c->reg[y];
-        break;
-      case 0x4: {
-        uint16_t res = (uint16_t)(c->reg[x]) + (uint16_t)c->reg[y];
-        c->reg[0xF] = res > 0xFF;
-        c->reg[x] = (uint8_t)(res & 0xFF);
-      } break;
-      case 0x5:
-        c->reg[0xF] = c->reg[x] > c->reg[y];
-        c->reg[x] -= c->reg[y];
-        break;
-      case 0x6:
-        c->reg[0xF] = c->reg[x] & 0x1;
-        c->reg[x] >>= 1;
-        break;
-      case 0x7:
-        c->reg[0xF] = c->reg[y] > c->reg[x];
-        c->reg[x] = c->reg[y] - c->reg[x];
-        break;
-      case 0xE:
-        c->reg[0xF] = (c->reg[x] & 0b10000000) >> 7;
-        c->reg[x] <<= 1;
-        break;
-      default:
-        BAD_INS();
-      }
-    } break;
-    case 0x9: {
-      if (c->reg[x] != c->reg[y]) {
-        c->pc += 2;
-      }
-    } break;
-    case 0xA: {
-      c->I = nnn;
-    } break;
-    case 0xB: {
-      c->pc = nnn + c->reg[0];
-    } break;
-    case 0xC: {
-      c->reg[x] = (rand() % 256) & kk;
-    } break;
-    case 0xD: {
-      c->reg[0xF] = 0;
-      for (size_t row = 0; row < n; row++) {
-        for (int col = 0; col < 8; col++) {
-          if ((c->memory[c->I + row] & (0b10000000 >> col)) != 0) {
-            size_t pixel_x = (c->reg[x] + col) % 64;
-            size_t pixel_y = (c->reg[y] + row) % 32;
-            size_t offset = pixel_x + (pixel_y * 64);
-
-            if (c->display[offset] == 1) {
-              c->reg[0xF] = 1;
-            }
-            c->display[offset] ^= 1;
-          }
-        }
-      }
-    } break;
-    case 0xE: {
-      switch (kk) {
-      case 0x9E:
-        if (IsKeyDown(keyboard_map[c->reg[x]])) {
-          c->pc += 2;
-        }
-        break;
-      case 0xA1:
-        if (!IsKeyDown(keyboard_map[c->reg[x]])) {
-          c->pc += 2;
-        }
-        break;
-      default:
-        BAD_INS();
-      }
-    } break;
-    case 0xF: {
-      switch (kk) {
-      case 0x07:
-        c->reg[x] = c->delay_timer;
-        break;
-      case 0x0A: {
-        bool key_pressed = false;
-        while (!key_pressed && WindowShouldClose()) {
-          for (size_t i = 0; i < 16; i++) {
-            if (IsKeyDown(keyboard_map[i])) {
-              key_pressed = true;
-              break;
-            }
-          }
-        }
-      } break;
-      case 0x15:
-        c->delay_timer = c->reg[x];
-        break;
-      case 0x18:
-        c->sound_timer = c->reg[x];
-        break;
-      case 0x1E:
-        c->I += c->reg[x];
-        break;
-      case 0x29:
-        c->I = c->reg[x] * 5;
-        break;
-      case 0x33:
-        c->memory[c->I] = c->reg[x] / 100;
-        c->memory[c->I + 1] = (c->reg[x] / 10) % 10;
-        c->memory[c->I + 2] = c->reg[x] % 10;
-        break;
-      case 0x55:
-        for (size_t i = 0; i <= x; i++) {
-          c->memory[c->I + i] = c->reg[i];
-        }
-        break;
-      case 0x65:
-        for (size_t i = 0; i <= x; i++) {
-          c->reg[i] = c->memory[c->I + i];
-        }
-        break;
-      default:
-        BAD_INS();
-      }
-    } break;
+    case 0x5:
+      c->reg[0xF] = c->reg[x] > c->reg[y];
+      c->reg[x] -= c->reg[y];
+      break;
+    case 0x6:
+      c->reg[0xF] = c->reg[x] & 0x1;
+      c->reg[x] >>= 1;
+      break;
+    case 0x7:
+      c->reg[0xF] = c->reg[y] > c->reg[x];
+      c->reg[x] = c->reg[y] - c->reg[x];
+      break;
+    case 0xE:
+      c->reg[0xF] = (c->reg[x] & 0b10000000) >> 7;
+      c->reg[x] <<= 1;
+      break;
     default:
       BAD_INS();
     }
-  } while (0);
+  } break;
+  case 0x9: {
+    if (c->reg[x] != c->reg[y]) {
+      c->pc += 2;
+    }
+  } break;
+  case 0xA: {
+    c->I = nnn;
+  } break;
+  case 0xB: {
+    c->pc = nnn + c->reg[0];
+  } break;
+  case 0xC: {
+    c->reg[x] = (rand() % 256) & kk;
+  } break;
+  case 0xD: {
+    c->reg[0xF] = 0;
+    for (size_t row = 0; row < n; row++) {
+      for (int col = 0; col < 8; col++) {
+        if ((c->memory[c->I + row] & (0b10000000 >> col)) != 0) {
+          size_t pixel_x = (c->reg[x] + col) % 64;
+          size_t pixel_y = (c->reg[y] + row) % 32;
+          size_t offset = pixel_x + (pixel_y * 64);
+
+          if (c->display[offset] == 1) {
+            c->reg[0xF] = 1;
+          }
+          c->display[offset] ^= 1;
+        }
+      }
+    }
+  } break;
+  case 0xE: {
+    switch (kk) {
+    case 0x9E:
+      if (IsKeyDown(keyboard_map[c->reg[x]])) {
+        c->pc += 2;
+      }
+      break;
+    case 0xA1:
+      if (!IsKeyDown(keyboard_map[c->reg[x]])) {
+        c->pc += 2;
+      }
+      break;
+    default:
+      BAD_INS();
+    }
+  } break;
+  case 0xF: {
+    switch (kk) {
+    case 0x07:
+      c->reg[x] = c->delay_timer;
+      break;
+    case 0x0A: {
+      bool key_pressed = false;
+      while (!key_pressed && WindowShouldClose()) {
+        for (size_t i = 0; i < 16; i++) {
+          if (IsKeyDown(keyboard_map[i])) {
+            key_pressed = true;
+            break;
+          }
+        }
+      }
+    } break;
+    case 0x15:
+      c->delay_timer = c->reg[x];
+      break;
+    case 0x18:
+      c->sound_timer = c->reg[x];
+      break;
+    case 0x1E:
+      c->I += c->reg[x];
+      break;
+    case 0x29:
+      c->I = c->reg[x] * 5;
+      break;
+    case 0x33:
+      c->memory[c->I] = c->reg[x] / 100;
+      c->memory[c->I + 1] = (c->reg[x] / 10) % 10;
+      c->memory[c->I + 2] = c->reg[x] % 10;
+      break;
+    case 0x55:
+      for (size_t i = 0; i <= x; i++) {
+        c->memory[c->I + i] = c->reg[i];
+      }
+      break;
+    case 0x65:
+      for (size_t i = 0; i <= x; i++) {
+        c->reg[i] = c->memory[c->I + i];
+      }
+      break;
+    default:
+      BAD_INS();
+    }
+  } break;
+  default:
+    BAD_INS();
+  }
 }
 
 void chip8_free(CHIP8 c) {
@@ -426,6 +416,14 @@ int main(int argc, char *argv[]) {
   SetTargetFPS(60);
 
   while (!WindowShouldClose()) {
+    if (c.delay_timer > 0) {
+      c.delay_timer--;
+    }
+    if (c.sound_timer > 0) {
+      c.sound_timer--;
+      // TODO: buzzer
+    }
+
     for (int i = 0; i < 25; i++) {
       chip8_step(&c);
     }
