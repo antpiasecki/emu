@@ -37,7 +37,7 @@ typedef struct CHIP8 {
   uint8_t *display;
 } CHIP8;
 
-CHIP8 chip8_create() {
+CHIP8 chip8_create(void) {
   static const uint8_t fonts[] = {
       0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
       0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -284,7 +284,7 @@ void chip8_step(CHIP8 *c) {
       c->reg[x] = c->reg[y] - c->reg[x];
       break;
     case 0xE:
-      c->reg[0xF] = (c->reg[x] & 0b10000000) >> 7;
+      c->reg[0xF] = (c->reg[x] & 0x80) >> 7;
       c->reg[x] <<= 1;
       break;
     default:
@@ -309,7 +309,7 @@ void chip8_step(CHIP8 *c) {
     c->reg[0xF] = 0;
     for (size_t row = 0; row < n; row++) {
       for (int col = 0; col < 8; col++) {
-        if ((c->memory[c->I + row] & (0b10000000 >> col)) != 0) {
+        if ((c->memory[c->I + row] & (0x80 >> col)) != 0) {
           size_t pixel_x = (c->reg[x] + col) % 64;
           size_t pixel_y = (c->reg[y] + row) % 32;
           size_t offset = pixel_x + (pixel_y * 64);
