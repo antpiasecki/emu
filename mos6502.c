@@ -7,15 +7,21 @@
 #define READ_U8() m->memory[m->pc++]
 #define READ_U16() (READ_U8() | (READ_U8() << 8))
 
+#define FLAG_N 0x80
+#define FLAG_V 0x40
+#define FLAG_D 0x04
+#define FLAG_I 0x04
+#define FLAG_Z 0x02
+#define FLAG_C 0x01
+
 typedef struct MOS6502 {
   uint8_t *memory;
   uint16_t pc;
-  // TODO
-  // uint8_t A;
-  // uint8_t X;
-  // uint8_t Y;
-  // uint8_t SP;
-  // uint8_t P;
+  uint8_t A;
+  uint8_t X;
+  uint8_t Y;
+  uint8_t SP;
+  uint8_t P;
 } MOS6502;
 
 MOS6502 mos6502_create(void) {
@@ -23,6 +29,60 @@ MOS6502 mos6502_create(void) {
   m.pc = 0x600;
   m.memory = calloc(1, 1 << 16);
   return m;
+}
+
+void mos6502_set_zn(MOS6502 *m, uint8_t v) {
+  if (v == 0) {
+    m->P |= FLAG_Z;
+  } else {
+    m->P &= ~FLAG_Z;
+  }
+  if (v & 0x80) {
+    m->P |= FLAG_N;
+  } else {
+    m->P &= ~FLAG_N;
+  }
+}
+
+void mos6502_step(MOS6502 *m) {
+  uint8_t op = READ_U8();
+  switch (op) {
+  case 0x00: {
+    // TODO: its supposed to do some interrupt magic
+    exit(0);
+  } break;
+  case 0x4C: {
+    m->pc = READ_U16();
+  } break;
+  case 0x8D: {
+    uint16_t addr = READ_U16();
+    m->memory[addr] = m->A;
+    if (addr == 0x0400) {
+      putchar(m->memory[addr]);
+    }
+  } break;
+  case 0xA0: {
+    m->Y = READ_U8();
+    mos6502_set_zn(m, m->Y);
+  } break;
+  case 0xB9: {
+    m->A = m->memory[READ_U16() + m->Y];
+    mos6502_set_zn(m, m->A);
+  } break;
+  case 0xC8: {
+    m->Y++;
+    mos6502_set_zn(m, m->Y);
+  } break;
+  case 0xF0: {
+    int8_t offset = READ_U8();
+    if (m->P & FLAG_Z) {
+      m->pc += offset;
+    }
+  } break;
+  default:
+    fprintf(stderr, "unrecognized opcode: $%02X\n", op);
+    exit(1);
+  }
 }
 
 void mos6502_disassemble(MOS6502 *m, size_t program_size) {
@@ -517,7 +577,7 @@ int main(int argc, char *argv[]) {
     m.memory[0x600 + i] = buffer[i];
   }
 
-  mos6502_disassemble(&m, n);
-
-  mos6502_free(m);
+  while (1) {
+    mos6502_step(&m);
+  }
 }
