@@ -344,11 +344,11 @@ void chip8_step(CHIP8 *c) {
       c->reg[x] = c->delay_timer;
       break;
     case 0x0A: {
-      bool key_pressed = false;
+      uint8_t key_pressed = 0;
       while (!key_pressed && WindowShouldClose()) {
         for (size_t i = 0; i < 16; i++) {
           if (IsKeyDown(keyboard_map[i])) {
-            key_pressed = true;
+            key_pressed = 1;
             break;
           }
         }
