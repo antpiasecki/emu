@@ -1,5 +1,4 @@
 // https://www.masswerk.at/6502/6502_instruction_set.html
-// https://tutorial-6502.sourceforge.io/specification/opcodes/
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,7 +51,8 @@ uint8_t mos6502_mem_read(MOS6502 *m, uint16_t addr) { return m->memory[addr]; }
 void mos6502_mem_write(MOS6502 *m, uint16_t addr, uint8_t v) {
   m->memory[addr] = v;
   if (addr == 0x0400) {
-    putchar(m->memory[addr]);
+    printf("%c", m->memory[addr]);
+    fflush(stdout);
   }
 }
 
@@ -125,6 +125,14 @@ void mos6502_step(MOS6502 *m) {
     uint16_t high = mos6502_mem_read(m, 0x0100 + (++m->SP));
     m->pc = (((uint16_t)high << 8) | low) + 1;
   } break;
+  case 0x65: {
+    uint8_t oper = mos6502_mem_read(m, READ_U8());
+    uint16_t res = m->A + oper + (m->P & FLAG_C);
+    mos6502_set_flag(m, FLAG_C, res > 0xFF);
+    mos6502_set_flag(m, FLAG_V, (~(m->A ^ oper) & (m->A ^ res) & 0x80) != 0);
+    mos6502_set_zn(m, res);
+    m->A = res;
+  } break;
   case 0x68: {
     m->A = mos6502_mem_read(m, 0x0100 + (++m->SP));
     mos6502_set_zn(m, m->A);
@@ -134,8 +142,8 @@ void mos6502_step(MOS6502 *m) {
     uint16_t res = m->A + oper + (m->P & FLAG_C);
     mos6502_set_flag(m, FLAG_C, res > 0xFF);
     mos6502_set_flag(m, FLAG_V, (~(m->A ^ oper) & (m->A ^ res) & 0x80) != 0);
+    mos6502_set_zn(m, res);
     m->A = res;
-    mos6502_set_zn(m, m->A);
   } break;
   case 0x6A: {
     uint8_t old_carry = m->P & FLAG_C;
@@ -144,12 +152,39 @@ void mos6502_step(MOS6502 *m) {
     mos6502_set_flag(m, FLAG_C, new_carry);
     mos6502_set_zn(m, m->A);
   } break;
+  case 0x6C: {
+    uint16_t oper = READ_U16();
+    uint16_t addr =
+        mos6502_mem_read(m, oper) | (mos6502_mem_read(m, oper + 1) << 8);
+    m->pc = addr;
+  } break;
+  case 0x6D: {
+    uint8_t oper = mos6502_mem_read(m, READ_U16());
+    uint16_t res = m->A + oper + (m->P & FLAG_C);
+    mos6502_set_flag(m, FLAG_C, res > 0xFF);
+    mos6502_set_flag(m, FLAG_V, (~(m->A ^ oper) & (m->A ^ res) & 0x80) != 0);
+    mos6502_set_zn(m, res);
+    m->A = res;
+  } break;
+  case 0x78: {
+    mos6502_set_flag(m, FLAG_I, 1);
+  } break;
+  case 0x88: {
+    m->Y--;
+    mos6502_set_zn(m, m->Y);
+  } break;
   case 0x8A: {
     m->A = m->X;
     mos6502_set_zn(m, m->A);
   } break;
+  case 0x85: {
+    mos6502_mem_write(m, READ_U8(), m->A);
+  } break;
   case 0x8D: {
     mos6502_mem_write(m, READ_U16(), m->A);
+  } break;
+  case 0x8E: {
+    mos6502_mem_write(m, READ_U16(), m->X);
   } break;
   case 0x90: {
     int8_t offset = READ_U8();
@@ -164,6 +199,9 @@ void mos6502_step(MOS6502 *m) {
   case 0x99: {
     mos6502_mem_write(m, READ_U16() + m->Y, m->A);
   } break;
+  case 0x9A: {
+    m->SP = m->X;
+  } break;
   case 0x9D: {
     mos6502_mem_write(m, READ_U16() + m->X, m->A);
   } break;
@@ -171,13 +209,28 @@ void mos6502_step(MOS6502 *m) {
     m->Y = READ_U8();
     mos6502_set_zn(m, m->Y);
   } break;
+  case 0xA1: {
+    uint8_t oper = READ_U8() + m->X;
+    uint16_t addr = mos6502_mem_read(m, oper) |
+                    (mos6502_mem_read(m, (oper + 1 & 0xFF)) << 8);
+    m->A = mos6502_mem_read(m, addr);
+    mos6502_set_zn(m, m->A);
+  } break;
   case 0xA2: {
     m->X = READ_U8();
     mos6502_set_zn(m, m->X);
   } break;
-  case 0xA8: {
-    m->X = m->A;
+  case 0xA5: {
+    m->A = mos6502_mem_read(m, READ_U8());
+    mos6502_set_zn(m, m->A);
+  } break;
+  case 0xA6: {
+    m->X = mos6502_mem_read(m, READ_U8());
     mos6502_set_zn(m, m->X);
+  } break;
+  case 0xA8: {
+    m->Y = m->A;
+    mos6502_set_zn(m, m->Y);
   } break;
   case 0xA9: {
     m->A = READ_U8();
@@ -191,11 +244,22 @@ void mos6502_step(MOS6502 *m) {
     m->A = mos6502_mem_read(m, READ_U16());
     mos6502_set_zn(m, m->A);
   } break;
+  case 0xAE: {
+    m->X = mos6502_mem_read(m, READ_U16());
+    mos6502_set_zn(m, m->X);
+  } break;
   case 0xB0: {
     int8_t offset = READ_U8();
     if (m->P & FLAG_C) {
       m->pc += offset;
     }
+  } break;
+  case 0xB1: {
+    uint8_t oper = READ_U8();
+    uint16_t addr = mos6502_mem_read(m, oper) |
+                    (mos6502_mem_read(m, (oper + 1 & 0xFF)) << 8);
+    m->A = mos6502_mem_read(m, addr + m->Y);
+    mos6502_set_zn(m, m->A);
   } break;
   case 0xB9: {
     m->A = mos6502_mem_read(m, READ_U16() + m->Y);
@@ -204,6 +268,18 @@ void mos6502_step(MOS6502 *m) {
   case 0xBD: {
     m->A = mos6502_mem_read(m, READ_U16() + m->X);
     mos6502_set_zn(m, m->A);
+  } break;
+  case 0xC0: {
+    uint8_t oper = READ_U8();
+    uint16_t res = m->Y - oper;
+    mos6502_set_flag(m, FLAG_C, m->Y >= oper);
+    mos6502_set_zn(m, res);
+  } break;
+  case 0xC6: {
+    uint16_t addr = READ_U8();
+    uint8_t res = mos6502_mem_read(m, addr) - 1;
+    mos6502_mem_write(m, addr, res);
+    mos6502_set_zn(m, res);
   } break;
   case 0xC8: {
     m->Y++;
@@ -230,6 +306,9 @@ void mos6502_step(MOS6502 *m) {
       m->pc += offset;
     }
   } break;
+  case 0xD8: {
+    mos6502_set_flag(m, FLAG_D, 0);
+  } break;
   case 0xE0: {
     uint8_t oper = READ_U8();
     uint16_t res = m->X - oper;
@@ -238,6 +317,12 @@ void mos6502_step(MOS6502 *m) {
   } break;
   case 0xEE: {
     uint16_t addr = READ_U16();
+    uint8_t res = mos6502_mem_read(m, addr) + 1;
+    mos6502_mem_write(m, addr, res);
+    mos6502_set_zn(m, res);
+  } break;
+  case 0xE6: {
+    uint16_t addr = READ_U8();
     uint8_t res = mos6502_mem_read(m, addr) + 1;
     mos6502_mem_write(m, addr, res);
     mos6502_set_zn(m, res);
@@ -493,13 +578,13 @@ void mos6502_disassemble_ins(MOS6502 *m) {
     printf("STA ($%02X,X)", READ_U8());
   } break;
   case 0x84: {
-    printf("STY $%02X", READ_U8());
+    printf("STY $%02X\t", READ_U8());
   } break;
   case 0x85: {
-    printf("STA $%02X", READ_U8());
+    printf("STA $%02X\t", READ_U8());
   } break;
   case 0x86: {
-    printf("STX $%02X", READ_U8());
+    printf("STX $%02X\t", READ_U8());
   } break;
   case 0x88: {
     printf("DEY\t");
@@ -769,4 +854,6 @@ int main(int argc, char *argv[]) {
       mos6502_step(&m);
     }
   }
+
+  mos6502_free(m);
 }
