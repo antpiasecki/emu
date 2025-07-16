@@ -269,7 +269,7 @@ void chip8_step(CHIP8 *c) {
     case 0x4: {
       uint16_t res = (uint16_t)(c->reg[x]) + (uint16_t)c->reg[y];
       c->reg[0xF] = res > 0xFF;
-      c->reg[x] = (uint8_t)(res & 0xFF);
+      c->reg[x] = res;
     } break;
     case 0x5:
       c->reg[0xF] = c->reg[x] > c->reg[y];
