@@ -1,4 +1,5 @@
 // https://www.masswerk.at/6502/6502_instruction_set.html
+// TODO: IO
 // TODO: decimal mode
 // TODO: interrupts?
 // TODO: cycles?
@@ -25,6 +26,8 @@ typedef struct MOS6502 {
   uint8_t Y;
   uint8_t SP;
   uint8_t P;
+
+  uint8_t display_modified_this_cycle;
 } MOS6502;
 
 void mos6502_disassemble(MOS6502 *m);
@@ -55,13 +58,14 @@ uint8_t mos6502_mem_read(MOS6502 *m, uint16_t addr) { return m->memory[addr]; }
 
 void mos6502_mem_write(MOS6502 *m, uint16_t addr, uint8_t v) {
   m->memory[addr] = v;
-  if (addr == 0x0400) {
-    printf("%c", m->memory[addr]);
-    fflush(stdout);
+  if (0x0400 <= addr && addr < 0x0600) {
+    m->display_modified_this_cycle = 1;
   }
 }
 
 void mos6502_step(MOS6502 *m) {
+  m->display_modified_this_cycle = 0;
+
   uint8_t op = READ_U8();
   switch (op) {
   case 0x00: {
@@ -1413,7 +1417,22 @@ int main(int argc, char *argv[]) {
         m.pc = old_pc;
         printf("\tA: %02X X: %02X Y: %02X\n", m.A, m.X, m.Y);
       }
+
       mos6502_step(&m);
+
+      if (m.display_modified_this_cycle) {
+        static char buf[1024];
+        size_t p = 0;
+        for (size_t y = 0; y < 16; y++) {
+          for (size_t x = 0; x < 32; x++) {
+            char c = mos6502_mem_read(&m, 0x0400 + x + (y * 32));
+            buf[p++] = c == 0 ? ' ' : c;
+          }
+          buf[p++] = '\n';
+        }
+        buf[p] = '\0';
+        printf("\x1b[?25l%s\x1b[8A\x1b[8A", buf);
+      }
     }
   }
 
