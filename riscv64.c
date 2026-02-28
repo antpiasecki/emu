@@ -8,10 +8,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PARSE_I_INS(ins)                                                       \
+  uint8_t rd = (ins >> 7) & 0b11111;                                           \
+  uint8_t funct3 = (ins >> 12) & 0b111;                                        \
+  uint8_t rs1 = (ins >> 15) & 0b11111;                                         \
+  uint16_t imm = ins >> 20
+
+#define PARSE_U_INS(ins)                                                       \
+  uint8_t rd = (ins >> 7) & 0b11111;                                           \
+  uint32_t imm = ins >> 12
+
 typedef struct {
   size_t offset;
   size_t size;
 } Section;
+
+const char *REGS[32] = {"zero", "ra", "sp",  "gp",  "tp", "t0", "t1", "t2",
+                        "fp",   "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
+                        "a6",   "a7", "s2",  "s3",  "s4", "s5", "s6", "s7",
+                        "s8",   "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
 Section get_code_section(uint8_t *exe_bytes, size_t exe_size) {
   Elf *elf = elf_memory((char *)exe_bytes, exe_size);
@@ -50,25 +65,50 @@ void riscv64_disassemble(uint8_t *exe_bytes, Section section) {
     uint32_t ins;
     memcpy(&ins, exe_bytes + offset, 4);
 
-    uint16_t opcode = ins & 0x7f; // last 7 bits
+    uint16_t opcode = ins & 0b1111111;
 
     // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
     switch (opcode) {
     case 0b1100011:
       printf("B-type\n");
       break;
-    case 0b0010011:
-      printf("I-type 1\n");
-      break;
+    case 0b0010011: {
+      PARSE_I_INS(ins);
+
+      switch (funct3) {
+      case 0b000:
+        printf("addi %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
+        break;
+      default:
+        fprintf(stderr, "I-type 1: unrecognized funct3: %03b\n", funct3);
+        exit(1);
+      }
+    }; break;
     case 0b0000011:
       printf("I-type 2\n");
       break;
     case 0b1100111:
       printf("I-type 3\n");
       break;
-    case 0b1110011:
-      printf("I-type 4\n");
-      break;
+    case 0b1110011: {
+      PARSE_I_INS(ins);
+
+      switch (funct3) {
+      case 0b000:
+        switch (imm) {
+        case 0:
+          printf("ecall\n");
+          break;
+        default:
+          fprintf(stderr, "I-type 4: funct3=000 unrecognized imm: %b\n", imm);
+          exit(1);
+        };
+        break;
+      default:
+        fprintf(stderr, "I-type 4: unrecognized funct3: %03b\n", funct3);
+        exit(1);
+      }
+    }; break;
     case 0b1101111:
       printf("J-type\n");
       break;
@@ -87,9 +127,10 @@ void riscv64_disassemble(uint8_t *exe_bytes, Section section) {
     case 0b0110111:
       printf("U-type 1\n");
       break;
-    case 0b0010111:
-      printf("U-type 2\n");
-      break;
+    case 0b0010111: {
+      PARSE_U_INS(ins);
+      printf("auipc %s, %d\n", REGS[rd], imm);
+    }; break;
     default:
       fprintf(stderr, "Unrecognized opcode: %07b\n", opcode);
       exit(1);
