@@ -1,6 +1,5 @@
 // https://docs.riscv.org/reference/isa/_attachments/riscv-unprivileged.pdf
 // https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
-// https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 #include <gelf.h>
 #include <libelf.h>
 #include <stdint.h>
@@ -12,23 +11,30 @@
   uint8_t rd = (ins >> 7) & 0b11111;                                           \
   uint8_t funct3 = (ins >> 12) & 0b111;                                        \
   uint8_t rs1 = (ins >> 15) & 0b11111;                                         \
-  uint16_t imm = ins >> 20
+  int32_t imm = ((int32_t)ins) >> 20
 
 #define PARSE_U_INS(ins)                                                       \
   uint8_t rd = (ins >> 7) & 0b11111;                                           \
-  uint32_t imm = ins >> 12
+  int32_t imm = ((int32_t)ins) >> 20
+
+static const char *REGS[32] = {
+    "zero", "ra", "sp", "gp", "tp",  "t0",  "t1", "t2", "fp", "s1", "a0",
+    "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
+    "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
 typedef struct {
   size_t offset;
   size_t size;
 } Section;
 
-const char *REGS[32] = {"zero", "ra", "sp",  "gp",  "tp", "t0", "t1", "t2",
-                        "fp",   "s1", "a0",  "a1",  "a2", "a3", "a4", "a5",
-                        "a6",   "a7", "s2",  "s3",  "s4", "s5", "s6", "s7",
-                        "s8",   "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
+typedef struct {
+  uint8_t *memory;
+  size_t pc;
+  uint64_t regs[32];
+  Section code_section;
+} RISCV64;
 
-Section get_code_section(uint8_t *exe_bytes, size_t exe_size) {
+Section riscv64_get_code_section(uint8_t *exe_bytes, size_t exe_size) {
   Elf *elf = elf_memory((char *)exe_bytes, exe_size);
   if (!elf) {
     fprintf(stderr, "elf_begin failed: %s\n", elf_errmsg(-1));
@@ -58,12 +64,31 @@ Section get_code_section(uint8_t *exe_bytes, size_t exe_size) {
   exit(1);
 }
 
-void riscv64_disassemble(uint8_t *exe_bytes, Section section) {
-  size_t offset = section.offset;
+RISCV64 riscv64_load(uint8_t *exe_bytes, size_t exe_size) {
+  Section section = riscv64_get_code_section(exe_bytes, exe_size);
 
-  while (offset < section.offset + section.size) {
+  return (RISCV64){
+      .memory = exe_bytes,
+      .pc = section.offset,
+      .regs = {0},
+      .code_section = section,
+  };
+}
+
+void riscv64_dump(RISCV64 *r) {
+  printf("REGS:");
+  for (size_t i = 0; i < 32; i++) {
+    printf(" %lu", r->regs[i]);
+  }
+  printf("\n");
+}
+
+void riscv64_disassemble(RISCV64 *r) {
+  r->pc = r->code_section.offset;
+
+  while (r->pc < r->code_section.offset + r->code_section.size) {
     uint32_t ins;
-    memcpy(&ins, exe_bytes + offset, 4);
+    memcpy(&ins, r->memory + r->pc, 4);
 
     uint16_t opcode = ins & 0b1111111;
 
@@ -136,7 +161,86 @@ void riscv64_disassemble(uint8_t *exe_bytes, Section section) {
       exit(1);
     }
 
-    offset += 4;
+    r->pc += 4;
+  }
+}
+
+void riscv64_execute(RISCV64 *r) {
+  r->pc = r->code_section.offset;
+
+  while (r->pc < r->code_section.offset + r->code_section.size) {
+    r->regs[0] = 0; // clear the zero register
+
+    uint32_t ins;
+    memcpy(&ins, r->memory + r->pc, 4);
+
+    uint16_t opcode = ins & 0b1111111;
+
+    // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
+    switch (opcode) {
+    case 0b0010011: {
+      PARSE_I_INS(ins);
+
+      switch (funct3) {
+      case 0b000:
+        r->regs[rd] = r->regs[rs1] + imm;
+        break;
+      default:
+        fprintf(stderr, "I-type 1: unrecognized funct3: %03b\n", funct3);
+        exit(1);
+      }
+    }; break;
+    case 0b1110011: {
+      PARSE_I_INS(ins);
+
+      switch (funct3) {
+      case 0b000:
+        switch (imm) {
+        case 0:
+          // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
+          switch (r->regs[17]) {
+          case 64: { // write
+            if (r->regs[10] != 1) {
+              fprintf(stderr, "write syscall is implemented only for stdout\n");
+              exit(1);
+            }
+
+            size_t start = r->regs[11];
+            size_t end = r->regs[11] + r->regs[12];
+
+            for (size_t i = start; i < end; i++) {
+              putchar(r->memory[i]);
+            }
+          }; break;
+          case 93: { // exit
+            printf("Program exited with code %lu.\n", r->regs[11]);
+            return;
+          }; break;
+          default:
+            fprintf(stderr, "Unimplemented syscall: %lu\n", r->regs[17]);
+            exit(1);
+          }
+          break;
+        default:
+          fprintf(stderr, "I-type 4: funct3=000 unrecognized imm: %b\n", imm);
+          exit(1);
+        };
+        break;
+      default:
+        fprintf(stderr, "I-type 4: unrecognized funct3: %03b\n", funct3);
+        exit(1);
+      }
+    }; break;
+    case 0b0010111: {
+      PARSE_U_INS(ins);
+      r->regs[rd] = r->pc + (imm << 12);
+    }; break;
+    default:
+      fprintf(stderr, "Unrecognized opcode: %07b\n", opcode);
+      exit(1);
+    }
+
+    r->pc += 4;
   }
 }
 
@@ -167,7 +271,7 @@ int main(int argc, char *argv[]) {
   size_t exe_size = fread(exe_bytes, 1, 20 * 1024 * 1024, file);
   fclose(file);
 
-  Section section = get_code_section(exe_bytes, exe_size);
-
-  riscv64_disassemble(exe_bytes, section);
+  RISCV64 r = riscv64_load(exe_bytes, exe_size);
+  riscv64_disassemble(&r);
+  riscv64_execute(&r);
 }

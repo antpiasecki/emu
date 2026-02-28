@@ -15,7 +15,7 @@ if command -v pkg-config >/dev/null; then
     LIBELF_FLAGS=$(pkg-config --cflags --libs libelf 2>/dev/null)
     if [ $? -eq 0 ]; then
         echo "building riscv64..."
-        cc -Wall -Wextra -Wpedantic -std=gnu11 -Wno-gnu-binary-literal -o riscv64 riscv64.c $LIBELF_FLAGS
+        cc -Wall -Wextra -Wpedantic -std=gnu11 -Wno-gnu-binary-literal -Wno-unused-variable -o riscv64 riscv64.c $LIBELF_FLAGS
     else
         echo "libelf not found - skipping riscv64..."
     fi
