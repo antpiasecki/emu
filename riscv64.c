@@ -1,3 +1,6 @@
+// https://docs.riscv.org/reference/isa/_attachments/riscv-unprivileged.pdf
+// https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
+// https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 #include <gelf.h>
 #include <libelf.h>
 #include <stdint.h>
@@ -40,6 +43,62 @@ Section get_code_section(uint8_t *exe_bytes, size_t exe_size) {
   exit(1);
 }
 
+void riscv64_disassemble(uint8_t *exe_bytes, Section section) {
+  size_t offset = section.offset;
+
+  while (offset < section.offset + section.size) {
+    uint32_t ins;
+    memcpy(&ins, exe_bytes + offset, 4);
+
+    uint16_t opcode = ins & 0x7f; // last 7 bits
+
+    // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
+    switch (opcode) {
+    case 0b1100011:
+      printf("B-type\n");
+      break;
+    case 0b0010011:
+      printf("I-type 1\n");
+      break;
+    case 0b0000011:
+      printf("I-type 2\n");
+      break;
+    case 0b1100111:
+      printf("I-type 3\n");
+      break;
+    case 0b1110011:
+      printf("I-type 4\n");
+      break;
+    case 0b1101111:
+      printf("J-type\n");
+      break;
+    case 0b0110011:
+      printf("R-type 1\n");
+      break;
+    case 0b0101111:
+      printf("R-type 2\n");
+      break;
+    case 0b0111011:
+      printf("R-type 3\n");
+      break;
+    case 0b0100011:
+      printf("S-type\n");
+      break;
+    case 0b0110111:
+      printf("U-type 1\n");
+      break;
+    case 0b0010111:
+      printf("U-type 2\n");
+      break;
+    default:
+      fprintf(stderr, "Unrecognized opcode: %07b\n", opcode);
+      exit(1);
+    }
+
+    offset += 4;
+  }
+}
+
 int main(int argc, char *argv[]) {
   if (elf_version(EV_CURRENT) == EV_NONE) {
     fprintf(stderr, "Failed to initialize libelf: %s\n", elf_errmsg(-1));
@@ -69,6 +128,5 @@ int main(int argc, char *argv[]) {
 
   Section section = get_code_section(exe_bytes, exe_size);
 
-  printf("Offset: %zu\n", section.offset);
-  printf("Size: %zu\n", section.size);
+  riscv64_disassemble(exe_bytes, section);
 }
