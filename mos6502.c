@@ -911,10 +911,10 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("ORA ($%02X,X)", READ_U8());
   } break;
   case 0x05: {
-    printf("ORA $%02X", READ_U8());
+    printf("ORA $%02X\t", READ_U8());
   } break;
   case 0x06: {
-    printf("ASL $%02X", READ_U8());
+    printf("ASL $%02X\t", READ_U8());
   } break;
   case 0x08: {
     printf("PHP\t");
@@ -923,7 +923,7 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("ORA #$%02X\t", READ_U8());
   } break;
   case 0x0A: {
-    printf("ASL A");
+    printf("ASL A\t");
   } break;
   case 0x0D: {
     printf("ORA $%04X", READ_U16());
@@ -963,13 +963,13 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("AND ($%02X,X)", READ_U8());
   } break;
   case 0x24: {
-    printf("BIT $%02X", READ_U8());
+    printf("BIT $%02X\t", READ_U8());
   } break;
   case 0x25: {
-    printf("AND $%02X", READ_U8());
+    printf("AND $%02X\t", READ_U8());
   } break;
   case 0x26: {
-    printf("ROL $%02X", READ_U8());
+    printf("ROL $%02X\t", READ_U8());
   } break;
   case 0x28: {
     printf("PLP\t");
@@ -978,7 +978,7 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("AND #$%02X\t", READ_U8());
   } break;
   case 0x2A: {
-    printf("ROL A");
+    printf("ROL A\t");
   } break;
   case 0x2C: {
     printf("BIT $%04X", READ_U16());
@@ -1021,10 +1021,10 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("EOR ($%02X,X)", READ_U8());
   } break;
   case 0x45: {
-    printf("EOR $%02X", READ_U8());
+    printf("EOR $%02X\t", READ_U8());
   } break;
   case 0x46: {
-    printf("LSR $%02X", READ_U8());
+    printf("LSR $%02X\t", READ_U8());
   } break;
   case 0x48: {
     printf("PHA\t");
@@ -1076,10 +1076,10 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("ADC ($%02X,X)", READ_U8());
   } break;
   case 0x65: {
-    printf("ADC $%02X", READ_U8());
+    printf("ADC $%02X\t", READ_U8());
   } break;
   case 0x66: {
-    printf("ROR $%02X", READ_U8());
+    printf("ROR $%02X\t", READ_U8());
   } break;
   case 0x68: {
     printf("PLA\t");
@@ -1088,7 +1088,7 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("ADC #$%02X\t", READ_U8());
   } break;
   case 0x6A: {
-    printf("ROR A");
+    printf("ROR A\t");
   } break;
   case 0x6C: {
     printf("JMP ($%04X)", READ_U16());
@@ -1189,13 +1189,13 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("LDX #$%02X\t", READ_U8());
   } break;
   case 0xA4: {
-    printf("LDY $%02X", READ_U8());
+    printf("LDY $%02X\t", READ_U8());
   } break;
   case 0xA5: {
-    printf("LDA $%02X", READ_U8());
+    printf("LDA $%02X\t", READ_U8());
   } break;
   case 0xA6: {
-    printf("LDX $%02X", READ_U8());
+    printf("LDX $%02X\t", READ_U8());
   } break;
   case 0xA8: {
     printf("TAY\t");
@@ -1250,19 +1250,19 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("LDX $%04X,Y", READ_U16());
   } break;
   case 0xC0: {
-    printf("CPY #$%02X", READ_U8());
+    printf("CPY #$%02X\t", READ_U8());
   } break;
   case 0xC1: {
     printf("CMP ($%02X,X)", READ_U8());
   } break;
   case 0xC4: {
-    printf("CPY $%02X", READ_U8());
+    printf("CPY $%02X\t", READ_U8());
   } break;
   case 0xC5: {
-    printf("CMP $%02X", READ_U8());
+    printf("CMP $%02X\t", READ_U8());
   } break;
   case 0xC6: {
-    printf("DEC $%02X", READ_U8());
+    printf("DEC $%02X\t", READ_U8());
   } break;
   case 0xC8: {
     printf("INY\t");
@@ -1308,19 +1308,19 @@ void mos6502_disassemble(MOS6502 *m) {
     printf("DEC $%04X,X", READ_U16());
   } break;
   case 0xE0: {
-    printf("CPX #$%02X", READ_U8());
+    printf("CPX #$%02X\t", READ_U8());
   } break;
   case 0xE1: {
     printf("SBC ($%02X,X)", READ_U8());
   } break;
   case 0xE4: {
-    printf("CPX $%02X", READ_U8());
+    printf("CPX $%02X\t", READ_U8());
   } break;
   case 0xE5: {
-    printf("SBC $%02X", READ_U8());
+    printf("SBC $%02X\t", READ_U8());
   } break;
   case 0xE6: {
-    printf("INC $%02X", READ_U8());
+    printf("INC $%02X\t", READ_U8());
   } break;
   case 0xE8: {
     printf("INX\t");
@@ -1415,7 +1415,7 @@ int main(int argc, char *argv[]) {
         uint16_t old_pc = m.pc;
         mos6502_disassemble(&m);
         m.pc = old_pc;
-        printf("\tA: %02X X: %02X Y: %02X\n", m.A, m.X, m.Y);
+        printf("\tA: $%02X X: $%02X Y: $%02X SP: $%02X\n", m.A, m.X, m.Y, m.SP);
       }
 
       mos6502_step(&m);

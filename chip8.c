@@ -10,10 +10,10 @@
   uint8_t high = c->memory[c->pc++];                                           \
   uint16_t ins = (low << 8) | high;                                            \
   uint16_t nnn = ins & 0x0FFF;                                                 \
+  uint8_t kk = ins & 0x00FF;                                                   \
   uint8_t n = ins & 0x000F;                                                    \
   uint8_t x = (ins >> 8) & 0x0F;                                               \
-  uint8_t y = (ins >> 4) & 0x0F;                                               \
-  uint8_t kk = ins & 0x00FF
+  uint8_t y = (ins >> 4) & 0x0F
 
 #define BAD_INS()                                                              \
   fprintf(stderr, "unrecognized instruction\n");                               \
@@ -396,20 +396,35 @@ void chip8_free(CHIP8 c) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "Usage: %s <path>\n", argv[0]);
+  const char *path = NULL;
+  uint8_t disassemble = 0;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-d") == 0) {
+      disassemble = 1;
+    } else {
+      path = argv[i];
+    }
+  }
+
+  if (path == NULL) {
+    fprintf(stderr, "Usage: %s [-d] <path>\n", argv[0]);
     return 1;
   }
 
   CHIP8 c = chip8_create();
 
   uint8_t buffer[4000];
-  FILE *f = fopen(argv[1], "rb");
+  FILE *f = fopen(path, "rb");
   size_t n = fread(buffer, 1, 4000, f);
   fclose(f);
 
   for (size_t i = 0; i < n; i++) {
     c.memory[0x200 + i] = buffer[i];
+  }
+
+  if (disassemble) {
+    chip8_disassemble(&c, n / 2);
+    return 0;
   }
 
   InitWindow(640, 320, "CHIP-8");
