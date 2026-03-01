@@ -66,7 +66,7 @@ typedef struct {
 
 extern const char *const REGS[32];
 
-inline void riscv64_disassemble_one(const RISCV64 *r) {
+void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
   uint32_t ins;
   memcpy(&ins, r->memory + r->pc, 4);
 
@@ -237,6 +237,8 @@ inline void riscv64_disassemble_one(const RISCV64 *r) {
     } else if (funct3 == 0b111) {
       if (funct7 == 0b000) {
         printf("and %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b001) {
+        printf("remu %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
       } else {
         fprintf(stderr, "R-type 1: funct3=0b111: unrecognized funct7: %b\n",
                 funct7);
@@ -264,6 +266,8 @@ inline void riscv64_disassemble_one(const RISCV64 *r) {
                 funct7);
         exit(1);
       }
+    } else if (funct3 == 0b100) {
+      printf("divw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
     } else if (funct3 == 0b101) {
       if (funct7 == 0b0000001) {
         printf("divuw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);

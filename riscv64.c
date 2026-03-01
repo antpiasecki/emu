@@ -9,22 +9,10 @@ const char *const REGS[32] = {
     "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
-Section riscv64_get_code_section(uint8_t *exe_bytes, size_t exe_size) {
-  Elf *elf = elf_memory((char *)exe_bytes, exe_size);
-  if (!elf) {
-    fprintf(stderr, "elf_begin failed: %s\n", elf_errmsg(-1));
-    exit(1);
-  }
-
+Section riscv64_get_code_section(Elf *elf, GElf_Ehdr ehdr) {
   size_t str_table_index;
   if (elf_getshdrstrndx(elf, &str_table_index) != 0) {
     fprintf(stderr, "elf_getshdrstrndx failed: %s\n", elf_errmsg(-1));
-    exit(1);
-  }
-
-  GElf_Ehdr ehdr;
-  if (gelf_getehdr(elf, &ehdr) == 0) {
-    fprintf(stderr, "gelf_getehdr failed: %s\n", elf_errmsg(-1));
     exit(1);
   }
 
@@ -36,11 +24,9 @@ Section riscv64_get_code_section(uint8_t *exe_bytes, size_t exe_size) {
 
     const char *name = elf_strptr(elf, str_table_index, header.sh_name);
     if (name && strcmp(name, ".text") == 0) {
-      elf_end(elf);
-      return (Section){.offset = header.sh_offset,
+      return (Section){.offset = header.sh_addr,
                        .size = header.sh_size,
-                       .entrypoint =
-                           ehdr.e_entry - header.sh_addr + header.sh_offset};
+                       .entrypoint = ehdr.e_entry};
     }
   }
 
@@ -49,13 +35,28 @@ Section riscv64_get_code_section(uint8_t *exe_bytes, size_t exe_size) {
 }
 
 RISCV64 riscv64_load(uint8_t *exe_bytes, size_t exe_size) {
-  Section section = riscv64_get_code_section(exe_bytes, exe_size);
+  uint8_t *memory = calloc(20 * 1024 * 1024, 1);
+
+  Elf *elf = elf_memory((char *)exe_bytes, exe_size);
+  GElf_Ehdr ehdr;
+  gelf_getehdr(elf, &ehdr);
+
+  Section text_section = riscv64_get_code_section(elf, ehdr);
+
+  for (size_t i = 0; i < ehdr.e_phnum; i++) {
+    GElf_Phdr phdr;
+    gelf_getphdr(elf, i, &phdr);
+    if (phdr.p_type == PT_LOAD) {
+      memcpy(memory + phdr.p_vaddr, exe_bytes + phdr.p_offset, phdr.p_filesz);
+    }
+  }
+  elf_end(elf);
 
   return (RISCV64){
-      .memory = exe_bytes,
-      .pc = section.offset,
+      .memory = memory,
+      .pc = text_section.offset,
       .regs = {0},
-      .code_section = section,
+      .code_section = text_section,
   };
 }
 
@@ -132,7 +133,7 @@ void riscv64_execute(RISCV64 *r) {
           exit(1);
         }
       } else if (funct3 == 0b011) { // sltiu
-        r->regs[rd] = (r->regs[rs1] < (uint64_t)(int64_t)imm) ? 1 : 0;
+        r->regs[rd] = ((uint64_t)r->regs[rs1] < (uint64_t)(int64_t)imm) ? 1 : 0;
       } else if (funct3 == 0b100) { // xori
         r->regs[rd] = r->regs[rs1] ^ imm;
       } else if (funct3 == 0b101) {
@@ -299,7 +300,7 @@ void riscv64_execute(RISCV64 *r) {
         }
       } else if (funct3 == 0b010) {
         if (funct7 == 0b0000000) { // slt
-          r->regs[rd] = ((int64_t)r->regs[rs1] < (int64_t)r->regs[rs2]) ? 1 : 0;
+          r->regs[rd] = (r->regs[rs1] < r->regs[rs2]) ? 1 : 0;
         } else {
           fprintf(stderr, "R-type 1: funct3=0b010: unrecognized funct7: %b\n",
                   funct7);
@@ -321,7 +322,7 @@ void riscv64_execute(RISCV64 *r) {
           if (r->regs[rs2] == 0) {
             r->regs[rd] = -1;
           } else {
-            r->regs[rd] = (int64_t)r->regs[rs1] / (int64_t)r->regs[rs2];
+            r->regs[rd] = r->regs[rs1] / r->regs[rs2];
           }
         } else {
           fprintf(stderr, "R-type 1: funct3=0b100: unrecognized funct7: %b\n",
@@ -333,7 +334,7 @@ void riscv64_execute(RISCV64 *r) {
           if (r->regs[rs2] == 0) {
             r->regs[rd] = r->regs[rs1];
           } else {
-            r->regs[rd] = (int64_t)r->regs[rs1] % (int64_t)r->regs[rs2];
+            r->regs[rd] = r->regs[rs1] % r->regs[rs2];
           }
         } else if (funct7 == 0b0000000) { // or
           r->regs[rd] = r->regs[rs1] | r->regs[rs2];
@@ -345,6 +346,12 @@ void riscv64_execute(RISCV64 *r) {
       } else if (funct3 == 0b111) {
         if (funct7 == 0b000) { // and
           r->regs[rd] = r->regs[rs1] & r->regs[rs2];
+        } else if (funct7 == 0b001) { // remu
+          if (r->regs[rs2] == 0) {
+            r->regs[rd] = r->regs[rs1];
+          } else {
+            r->regs[rd] = (uint64_t)r->regs[rs1] % (uint64_t)r->regs[rs2];
+          }
         } else {
           fprintf(stderr, "R-type 1: funct3=0b111: unrecognized funct7: %b\n",
                   funct7);
@@ -368,6 +375,14 @@ void riscv64_execute(RISCV64 *r) {
           fprintf(stderr, "R-type 3: funct3=000: unrecognized funct7: %b\n",
                   funct7);
           exit(1);
+        }
+      } else if (funct3 == 0b100) { // divw
+        int32_t a = r->regs[rs1];
+        int32_t b = r->regs[rs2];
+        if (b == 0) {
+          r->regs[rd] = (uint64_t)(int64_t)(-1);
+        } else {
+          r->regs[rd] = (int64_t)(a / b);
         }
       } else if (funct3 == 0b101) {
         if (funct7 == 0b0000001) { // divuw
@@ -472,6 +487,7 @@ int main(int argc, char *argv[]) {
   fclose(file);
 
   RISCV64 r = riscv64_load(exe_bytes, exe_size);
+  free(exe_bytes);
 
   for (r.pc = r.code_section.offset;
        r.pc < r.code_section.offset + r.code_section.size; r.pc += 4) {
