@@ -1,8 +1,10 @@
-// https://docs.riscv.org/reference/isa/_attachments/riscv-unprivileged.pdf
+// https://docs.riscv.org/reference/isa/unpriv/rv-32-64g.html
 // https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
 #include "riscv64_dis.h"
 #include <gelf.h>
 #include <libelf.h>
+
+#define MEMORY_SIZE 20 * 1024 * 1024 // should be enough
 
 const char *const REGS[32] = {
     "zero", "ra", "sp", "gp", "tp",  "t0",  "t1", "t2", "fp", "s1", "a0",
@@ -35,7 +37,7 @@ Section riscv64_get_code_section(Elf *elf, GElf_Ehdr ehdr) {
 }
 
 RISCV64 riscv64_load(uint8_t *exe_bytes, size_t exe_size) {
-  uint8_t *memory = calloc(20 * 1024 * 1024, 1);
+  uint8_t *memory = calloc(MEMORY_SIZE, 1);
 
   Elf *elf = elf_memory((char *)exe_bytes, exe_size);
   GElf_Ehdr ehdr;
@@ -71,7 +73,7 @@ void riscv64_dump(const RISCV64 *r) {
 void riscv64_execute(RISCV64 *r) {
   r->pc = r->code_section.entrypoint;
 
-  r->regs[2] = (20 * 1024 * 1024) - 1; // set the stack pointer
+  r->regs[2] = MEMORY_SIZE - 1024; // set the stack pointer
 
   while (r->pc < r->code_section.offset + r->code_section.size) {
     r->regs[0] = 0; // clear the zero register
@@ -142,9 +144,9 @@ void riscv64_execute(RISCV64 *r) {
         uint32_t funct6 = (ins >> 26) & 0b111111;
 
         if (funct6 == 0b000000) { // srli
-          r->regs[rd] = r->regs[rs1] >> shamt;
+          r->regs[rd] = (uint64_t)r->regs[rs1] >> shamt;
         } else if (funct6 == 0b010000) { // srai
-          r->regs[rd] = (int32_t)r->regs[rs1] >> shamt;
+          r->regs[rd] = (int64_t)r->regs[rs1] >> shamt;
         } else {
           fprintf(stderr, "I-type 1: funct3=101: unrecognized funct6: %b\n",
                   funct6);
@@ -310,6 +312,20 @@ void riscv64_execute(RISCV64 *r) {
         if (funct7 == 0b0000000) { // sltu
           r->regs[rd] =
               ((uint64_t)r->regs[rs1] < (uint64_t)r->regs[rs2]) ? 1 : 0;
+        } else if (funct7 == 0b0000001) { // mulhu
+          uint64_t a = r->regs[rs1];
+          uint64_t b = r->regs[rs2];
+          uint64_t a_lo = a & 0xffffffff;
+          uint64_t a_hi = a >> 32;
+          uint64_t b_lo = b & 0xffffffff;
+          uint64_t b_hi = b >> 32;
+          uint64_t lo_lo = a_lo * b_lo;
+          uint64_t hi_lo = a_hi * b_lo;
+          uint64_t lo_hi = a_lo * b_hi;
+          uint64_t hi_hi = a_hi * b_hi;
+          uint64_t mid =
+              (lo_lo >> 32) + (hi_lo & 0xffffffff) + (lo_hi & 0xffffffff);
+          r->regs[rd] = hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (mid >> 32);
         } else {
           fprintf(stderr, "R-type 1: funct3=0b011: unrecognized funct7: %b\n",
                   funct7);
@@ -362,6 +378,10 @@ void riscv64_execute(RISCV64 *r) {
         exit(1);
       }
     }; break;
+    case 0b0101111: {
+      fprintf(stderr, "A extension not implemented yet.\n");
+      exit(1);
+    }; break;
     case 0b0111011: {
       PARSE_R_INS(ins);
       if (funct3 == 0b000) {
@@ -376,6 +396,16 @@ void riscv64_execute(RISCV64 *r) {
                   funct7);
           exit(1);
         }
+      } else if (funct3 == 0b001) {
+        if (funct7 == 0b0000000) { // sllw
+          r->regs[rd] =
+              (int32_t)(uint32_t)((uint32_t)r->regs[rs1]
+                                  << ((uint32_t)r->regs[rs2] & 0b11111));
+        } else {
+          fprintf(stderr, "R-type 3: funct3=001: unrecognized funct7: %b\n",
+                  funct7);
+          exit(1);
+        }
       } else if (funct3 == 0b100) { // divw
         int32_t a = r->regs[rs1];
         int32_t b = r->regs[rs2];
@@ -385,7 +415,13 @@ void riscv64_execute(RISCV64 *r) {
           r->regs[rd] = (int64_t)(a / b);
         }
       } else if (funct3 == 0b101) {
-        if (funct7 == 0b0000001) { // divuw
+        if (funct7 == 0b0000000) { // srlw
+          r->regs[rd] = (int32_t)((uint32_t)r->regs[rs1] >>
+                                  ((uint32_t)r->regs[rs2] & 0b11111));
+        } else if (funct7 == 0b0100000) { // sraw
+          r->regs[rd] =
+              ((int32_t)r->regs[rs1]) >> ((uint32_t)r->regs[rs2] & 0b11111);
+        } else if (funct7 == 0b0000001) { // divuw
           if (r->regs[rs2] == 0) {
             r->regs[rd] = -1LL;
           } else {
@@ -416,6 +452,17 @@ void riscv64_execute(RISCV64 *r) {
       } else if (funct3 == 0b001) {
         uint32_t shamt = (ins >> 20) & 0b11111;
         r->regs[rd] = (int32_t)r->regs[rs1] << shamt;
+      } else if (funct3 == 0b101) {
+        PARSE_R_INS(ins);
+        if (funct7 == 0b0000000) { // srliw
+          r->regs[rd] = (int32_t)((uint32_t)r->regs[rs1] >> rs2);
+        } else if (funct7 == 0b0100000) { // sraiw
+          r->regs[rd] = (int32_t)r->regs[rs1] >> rs2;
+        } else {
+          fprintf(stderr, "R-type 4: funct3=101: unrecognized funct7: %b\n",
+                  funct7);
+          exit(1);
+        }
       } else {
         fprintf(stderr, "R-type 4: unrecognized funct3: %03b\n", funct3);
         exit(1);
@@ -444,7 +491,7 @@ void riscv64_execute(RISCV64 *r) {
     }; break;
     case 0b0110111: { // lui
       PARSE_U_INS(ins);
-      r->regs[rd] = (int64_t)imm << 12;
+      r->regs[rd] = (int64_t)(int32_t)(imm << 12);
     }; break;
     case 0b0010111: { // auipc
       PARSE_U_INS(ins);
@@ -481,9 +528,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  // probably enough for anything we can handle
-  uint8_t *exe_bytes = malloc(20 * 1024 * 1024);
-  size_t exe_size = fread(exe_bytes, 1, 20 * 1024 * 1024, file);
+  uint8_t *exe_bytes = malloc(MEMORY_SIZE);
+  size_t exe_size = fread(exe_bytes, 1, MEMORY_SIZE, file);
   fclose(file);
 
   RISCV64 r = riscv64_load(exe_bytes, exe_size);

@@ -1,0 +1,5 @@
+/examples
+/test*
+/chip8
+/mos6502
+/riscv64

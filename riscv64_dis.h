@@ -87,6 +87,8 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
       printf("bge %s, %s, %d\n", REGS[rs1], REGS[rs2], imm);
     } else if (funct3 == 0b110) {
       printf("bltu %s, %s, %d\n", REGS[rs1], REGS[rs2], imm);
+    } else if (funct3 == 0b111) {
+      printf("bgeu %s, %s, %d\n", REGS[rs1], REGS[rs2], imm);
     } else {
       fprintf(stderr, "B-type: unrecognized funct3: %03b\n", funct3);
       exit(1);
@@ -108,6 +110,8 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
                 funct6);
         exit(1);
       }
+    } else if (funct3 == 0b010) {
+      printf("slti %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
     } else if (funct3 == 0b011) {
       printf("sltiu %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
     } else if (funct3 == 0b100) {
@@ -126,6 +130,8 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
                 funct6);
         exit(1);
       }
+    } else if (funct3 == 0b110) {
+      printf("ori %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
     } else if (funct3 == 0b111) {
       printf("andi %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
     } else {
@@ -146,6 +152,10 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
       printf("ld %s, %d(%s)\n", REGS[rd], imm, REGS[rs1]);
     } else if (funct3 == 0b100) {
       printf("lbu %s, %d(%s)\n", REGS[rd], imm, REGS[rs1]);
+    } else if (funct3 == 0b101) {
+      printf("lhu %s, %d(%s)\n", REGS[rd], imm, REGS[rs1]);
+    } else if (funct3 == 0b110) {
+      printf("lwu %s, %d(%s)\n", REGS[rd], imm, REGS[rs1]);
     } else {
       fprintf(stderr, "I-type 2: unrecognized funct3: %03b\n", funct3);
       exit(1);
@@ -189,7 +199,9 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
         exit(1);
       }
     } else if (funct3 == 0b001) {
-      if (funct7 == 0b0000001) {
+      if (funct7 == 0b0000000) {
+        printf("sll %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b0000001) {
         printf("mulh %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
       } else {
         fprintf(stderr, "R-type 1: funct3=0b001: unrecognized funct7: %b\n",
@@ -224,6 +236,18 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
                 funct7);
         exit(1);
       }
+    } else if (funct3 == 0b101) {
+      if (funct7 == 0b0000000) {
+        printf("srl %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b0000001) {
+        printf("divu %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b0100000) {
+        printf("sra %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else {
+        fprintf(stderr, "R-type 1: funct3=0b101: unrecognized funct7: %b\n",
+                funct7);
+        exit(1);
+      }
     } else if (funct3 == 0b110) {
       if (funct7 == 0b0000001) {
         printf("rem %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
@@ -250,7 +274,7 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
     }
   }; break;
   case 0b0101111:
-    fprintf(stderr, "R-type 2: unimplemented\n");
+    fprintf(stderr, "A extension not implemented yet.\n");
     exit(1);
   case 0b0111011: {
     PARSE_R_INS(ins);
@@ -266,16 +290,24 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
                 funct7);
         exit(1);
       }
+    } else if (funct3 == 0b001) {
+      printf("sllw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
     } else if (funct3 == 0b100) {
       printf("divw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
     } else if (funct3 == 0b101) {
-      if (funct7 == 0b0000001) {
+      if (funct7 == 0b0000000) {
+        printf("srlw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b0100000) {
+        printf("sraw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
+      } else if (funct7 == 0b0000001) {
         printf("divuw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
       } else {
         fprintf(stderr, "R-type 3: funct3=101: unrecognized funct7: %b\n",
                 funct7);
         exit(1);
       }
+    } else if (funct3 == 0b110) {
+      printf("remw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
     } else if (funct3 == 0b111) {
       printf("remuw %s, %s, %s\n", REGS[rd], REGS[rs1], REGS[rs2]);
     } else {
@@ -289,12 +321,27 @@ void riscv64_disassemble_one(const RISCV64 *r) { // NOLINT
       PARSE_I_INS(ins);
       printf("addiw %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
     } else if (funct3 == 0b001) {
-      PARSE_I_INS(ins);
-      printf("slliw %s, %s, %d\n", REGS[rd], REGS[rs1], imm);
+      PARSE_R_INS(ins);
+      printf("slliw %s, %s, %d\n", REGS[rd], REGS[rs1], rs2);
+    } else if (funct3 == 0b101) {
+      PARSE_R_INS(ins);
+      if (funct7 == 0b0000000) {
+        printf("srliw %s, %s, %d\n", REGS[rd], REGS[rs1], rs2);
+      } else if (funct7 == 0b0100000) {
+        printf("sraiw %s, %s, %d\n", REGS[rd], REGS[rs1], rs2);
+      } else {
+        fprintf(stderr, "R-type 4: funct3=101: unrecognized funct7: %b\n",
+                funct7);
+        exit(1);
+      }
     } else {
       fprintf(stderr, "R-type 4: unrecognized funct3: %03b\n", funct3);
       exit(1);
     }
+  }; break;
+  case 0b0100111: {
+    fprintf(stderr, "F extension not implemented yet.\n");
+    exit(1);
   }; break;
   case 0b0100011: {
     PARSE_S_INS(ins);
