@@ -20,12 +20,12 @@
 
 typedef struct MOS6502 {
   uint8_t *memory;
-  uint16_t pc;
-  uint8_t A;
-  uint8_t X;
-  uint8_t Y;
-  uint8_t SP;
-  uint8_t P;
+  uint16_t pc; // program counter
+  uint8_t A;   // accumulator
+  uint8_t X;   // register X
+  uint8_t Y;   // register Y
+  uint8_t SP;  // stack pointer
+  uint8_t P;   // processor status (see FLAG_*)
 
   uint8_t display_modified_this_cycle;
 } MOS6502;

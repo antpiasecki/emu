@@ -1,6 +1,6 @@
 #!/bin/bash
 
-COMMON="-g -Wall -Wextra -Wpedantic -Wno-unused-variable -Wno-gnu-binary-literal"
+COMMON="-g -Wall -Wextra -Wpedantic -Wno-unused-variable"
 
 echo "building mos6502..."
 cc $COMMON -std=c99 -o mos6502 mos6502.c
@@ -17,7 +17,7 @@ if command -v pkg-config >/dev/null; then
     LIBELF_FLAGS=$(pkg-config --cflags --libs libelf 2>/dev/null)
     if [ $? -eq 0 ]; then
         echo "building riscv64..."
-        cc $COMMON -std=gnu11 -o riscv64 riscv64.c $LIBELF_FLAGS
+        c++ $COMMON -o riscv64 riscv64.cc $LIBELF_FLAGS
     else
         echo "libelf not found - skipping riscv64..."
     fi
