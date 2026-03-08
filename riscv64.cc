@@ -83,6 +83,8 @@ static constexpr std::array<const char *, 32> REGS = {
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
 enum class Op {
+  INVALID,
+
   ADD,
   ADDI,
   ADDIW,
@@ -165,6 +167,48 @@ struct Section {
   u64 entrypoint;
 };
 
+enum class Format { NONE, R, I, I_LOAD, I_SHIFT, S, B, U, J };
+
+struct OpDef {
+  const char *mnemonic;
+  Format format;
+};
+
+static constexpr std::array<OpDef, 63> OP_TABLE = {{
+    {"???", Format::NONE},      {"add", Format::R},
+    {"addi", Format::I},        {"addiw", Format::I},
+    {"addw", Format::R},        {"and", Format::R},
+    {"andi", Format::I},        {"auipc", Format::U},
+    {"beq", Format::B},         {"bge", Format::B},
+    {"bgeu", Format::B},        {"blt", Format::B},
+    {"bltu", Format::B},        {"bne", Format::B},
+    {"div", Format::R},         {"divu", Format::R},
+    {"divuw", Format::R},       {"divw", Format::R},
+    {"ecall", Format::NONE},    {"jal", Format::J},
+    {"jalr", Format::I},        {"lb", Format::I_LOAD},
+    {"lbu", Format::I_LOAD},    {"ld", Format::I_LOAD},
+    {"lh", Format::I_LOAD},     {"lhu", Format::I_LOAD},
+    {"lui", Format::U},         {"lw", Format::I_LOAD},
+    {"lwu", Format::I_LOAD},    {"mul", Format::R},
+    {"mulh", Format::R},        {"mulhu", Format::R},
+    {"mulw", Format::R},        {"or", Format::R},
+    {"ori", Format::I},         {"rem", Format::R},
+    {"remu", Format::R},        {"remuw", Format::R},
+    {"remw", Format::R},        {"sb", Format::S},
+    {"sd", Format::S},          {"sh", Format::S},
+    {"sll", Format::R},         {"slli", Format::I_SHIFT},
+    {"slliw", Format::I_SHIFT}, {"sllw", Format::R},
+    {"slt", Format::R},         {"slti", Format::I},
+    {"sltiu", Format::I},       {"sltu", Format::R},
+    {"sra", Format::R},         {"srai", Format::I_SHIFT},
+    {"sraiw", Format::I_SHIFT}, {"sraw", Format::R},
+    {"srl", Format::R},         {"srli", Format::I_SHIFT},
+    {"srliw", Format::I_SHIFT}, {"srlw", Format::R},
+    {"sub", Format::R},         {"subw", Format::R},
+    {"sw", Format::S},          {"xor", Format::R},
+    {"xori", Format::I},
+}};
+
 class RISCV64 {
 public:
   RISCV64(const std::vector<char> &exe_bytes) {
@@ -190,339 +234,49 @@ public:
   void disassemble_all() {
     for (m_pc = m_code_section.offset;
          m_pc < m_code_section.offset + m_code_section.size; m_pc += 4) {
-      disassemble_one_fetch();
+      disassemble_one();
     }
   }
 
-  void disassemble_one_fetch() {
-    Ins ins = fetch_ins();
-    std::println("{} {} {} {} {} {} {} {} {}", static_cast<i32>(ins.op), ins.rd,
-                 ins.funct3, ins.rs1, ins.rs2, ins.funct7, ins.shamt,
-                 ins.funct6, ins.imm);
-  }
-
   void disassemble_one() {
-    u32 ins;
-    std::memcpy(&ins, m_memory.data() + m_pc, sizeof(ins));
+    Ins ins = fetch_ins();
 
-    u8 opcode = ins & 0b1111111;
+    const OpDef &def = OP_TABLE[static_cast<u64>(ins.op)];
 
-    // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
-    switch (opcode) {
-    case 0b1100011: {
-      PARSE_B_INS(ins);
-
-      if (funct3 == 0b000) {
-        std::println("beq {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else if (funct3 == 0b001) {
-        std::println("bne {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else if (funct3 == 0b100) {
-        std::println("blt {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else if (funct3 == 0b101) {
-        std::println("bge {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else if (funct3 == 0b110) {
-        std::println("bltu {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else if (funct3 == 0b111) {
-        std::println("bgeu {}, {}, {}", REGS[rs1], REGS[rs2], imm);
-      } else {
-        std::println(stderr, "B-type: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0010011: {
-      PARSE_I_INS(ins);
-
-      if (funct3 == 0b000) {
-        std::println("addi {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b001) {
-        u32 shamt = (ins >> 20) & 0b111111;
-        u8 funct6 = (ins >> 26) & 0b111111;
-
-        if (funct6 == 0b000000) {
-          std::println("slli {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-        } else {
-          std::println(stderr,
-                       "I-type 1: funct3=001: unrecognized funct6: {:b}",
-                       funct6);
-          exit(1);
-        }
-      } else if (funct3 == 0b010) {
-        std::println("slti {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b011) {
-        std::println("sltiu {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b100) {
-        std::println("xori {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b101) {
-        // of course this one just has to be different
-        u32 shamt = (ins >> 20) & 0b111111;
-        u8 funct6 = (ins >> 26) & 0b111111;
-
-        if (funct6 == 0b000000) {
-          std::println("srli {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-        } else if (funct6 == 0b010000) {
-          std::println("srai {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-        } else {
-          std::println(stderr,
-                       "I-type 1: funct3=101: unrecognized funct6: {:b}",
-                       funct6);
-          exit(1);
-        }
-      } else if (funct3 == 0b110) {
-        std::println("ori {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b111) {
-        std::println("andi {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else {
-        std::println(stderr, "I-type 1: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0000011: {
-      PARSE_I_INS(ins);
-
-      if (funct3 == 0b000) {
-        std::println("lb {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b001) {
-        std::println("lh {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b010) {
-        std::println("lw {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b011) {
-        std::println("ld {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b100) {
-        std::println("lbu {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b101) {
-        std::println("lhu {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else if (funct3 == 0b110) {
-        std::println("lwu {}, {}({})", REGS[rd], imm, REGS[rs1]);
-      } else {
-        std::println(stderr, "I-type 2: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b1100111: {
-      PARSE_I_INS(ins);
-      std::println("jalr {}, {}, {}", REGS[rd], REGS[rs1], imm);
-    }; break;
-    case 0b1110011: {
-      PARSE_I_INS(ins);
-
-      if (funct3 == 0b000) {
-        if (imm == 0) {
-          std::println("ecall");
-        } else {
-          std::println(stderr, "I-type 4: funct3=000 unrecognized imm: {:b}",
-                       imm);
-          exit(1);
-        }
-      } else {
-        std::println(stderr, "I-type 4: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b1101111: {
-      PARSE_J_INS(ins);
-      std::println("jal {}, {}", REGS[rd], imm);
-    }; break;
-    case 0b0110011: {
-      PARSE_R_INS(ins);
-      if (funct3 == 0b000) {
-        if (funct7 == 0b0000000) {
-          std::println("add {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0100000) {
-          std::println("sub {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("mul {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b000: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b001) {
-        if (funct7 == 0b0000000) {
-          std::println("sll {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("mulh {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b001: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b010) {
-        if (funct7 == 0b0000000) {
-          std::println("slt {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b010: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b011) {
-        if (funct7 == 0b0000000) {
-          std::println("sltu {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("mulhu {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b011: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b100) {
-        if (funct7 == 0b0000000) {
-          std::println("xor {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("div {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b100: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b101) {
-        if (funct7 == 0b0000000) {
-          std::println("srl {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("divu {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0100000) {
-          std::println("sra {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b101: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b110) {
-        if (funct7 == 0b0000001) {
-          std::println("rem {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000000) {
-          std::println("or {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b110: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b111) {
-        if (funct7 == 0b000) {
-          std::println("and {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b001) {
-          std::println("remu {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 1: funct3=0b111: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else {
-        std::println(stderr, "R-type 1: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0101111:
-      std::println(stderr, "A extension not implemented yet.");
-      exit(1);
-    case 0b0111011: {
-      PARSE_R_INS(ins);
-      if (funct3 == 0b000) {
-        if (funct7 == 0b0000000) {
-          std::println("addw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0100000) {
-          std::println("subw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("mulw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 3: funct3=000: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b001) {
-        std::println("sllw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-      } else if (funct3 == 0b100) {
-        std::println("divw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-      } else if (funct3 == 0b101) {
-        if (funct7 == 0b0000000) {
-          std::println("srlw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0100000) {
-          std::println("sraw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else if (funct7 == 0b0000001) {
-          std::println("divuw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-        } else {
-          std::println(stderr,
-                       "R-type 3: funct3=101: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else if (funct3 == 0b110) {
-        std::println("remw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-      } else if (funct3 == 0b111) {
-        std::println("remuw {}, {}, {}", REGS[rd], REGS[rs1], REGS[rs2]);
-      } else {
-        std::println(stderr, "R-type 3: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0011011: {
-      PARSE_I_INS(ins);
-      if (funct3 == 0b000) {
-        std::println("addiw {}, {}, {}", REGS[rd], REGS[rs1], imm);
-      } else if (funct3 == 0b001) {
-        u32 shamt = (ins >> 20) & 0b11111;
-        std::println("slliw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-      } else if (funct3 == 0b101) {
-        u32 shamt = (ins >> 20) & 0b11111;
-        u8 funct7 = (ins >> 25) & 0b1111111;
-        if (funct7 == 0b0000000) {
-          std::println("srliw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-        } else if (funct7 == 0b0100000) {
-          std::println("sraiw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
-        } else {
-          std::println(stderr,
-                       "R-type 4: funct3=101: unrecognized funct7: {:b}",
-                       funct7);
-          exit(1);
-        }
-      } else {
-        std::println(stderr, "R-type 4: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0000111: {
-      std::println(stderr, "F extension not implemented yet.");
-      exit(1);
-    }; break;
-    case 0b0100111: {
-      std::println(stderr, "F extension not implemented yet.");
-      exit(1);
-    }; break;
-    case 0b0100011: {
-      PARSE_S_INS(ins);
-
-      if (funct3 == 0b000) {
-        std::println("sb {}, {}({})", REGS[rs2], imm, REGS[rs1]);
-      } else if (funct3 == 0b001) {
-        std::println("sh {}, {}({})", REGS[rs2], imm, REGS[rs1]);
-      } else if (funct3 == 0b010) {
-        std::println("sw {}, {}({})", REGS[rs2], imm, REGS[rs1]);
-      } else if (funct3 == 0b011) {
-        std::println("sd {}, {}({})", REGS[rs2], imm, REGS[rs1]);
-      } else {
-        std::println(stderr, "S-type: unrecognized funct3: {:03b}", funct3);
-        exit(1);
-      }
-    }; break;
-    case 0b0110111: {
-      PARSE_U_INS(ins);
-      std::println("lui {}, {}", REGS[rd], imm);
-    }; break;
-    case 0b0010111: {
-      PARSE_U_INS(ins);
-      std::println("auipc {}, {}", REGS[rd], imm);
-    }; break;
-    default:
-      std::println(stderr, "Unrecognized opcode: {:07b}", opcode);
-      exit(1);
+    switch (def.format) {
+    case Format::R:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs1],
+                   REGS[ins.rs2]);
+      break;
+    case Format::I:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs1],
+                   ins.imm);
+      break;
+    case Format::I_LOAD:
+      std::println("{} {}, {}({})", def.mnemonic, REGS[ins.rd], ins.imm,
+                   REGS[ins.rs1]);
+      break;
+    case Format::I_SHIFT:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs1],
+                   ins.shamt);
+      break;
+    case Format::U:
+      std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
+      break;
+    case Format::S:
+      std::println("{} {}, {}({})", def.mnemonic, REGS[ins.rs2], ins.imm,
+                   REGS[ins.rs1]);
+      break;
+    case Format::B:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rs1], REGS[ins.rs2],
+                   ins.imm);
+      break;
+    case Format::J:
+      std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
+      break;
+    case Format::NONE:
+      std::println("{}", def.mnemonic);
+      break;
     }
   }
 
@@ -935,12 +689,12 @@ public:
             m_regs[rd] = (i32)m_regs[rs1] >> shamt;
           } else {
             std::println(stderr,
-                         "R-type 4: funct3=101: unrecognized funct7: {:b}",
+                         "I-type 6: funct3=101: unrecognized funct7: {:b}",
                          funct7);
             exit(1);
           }
         } else {
-          std::println(stderr, "R-type 4: unrecognized funct3: {:03b}", funct3);
+          std::println(stderr, "I-type 6: unrecognized funct3: {:03b}", funct3);
           exit(1);
         }
       }; break;
