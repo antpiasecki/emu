@@ -1,12 +1,15 @@
 // https://docs.riscv.org/reference/isa/unpriv/rv-32-64g.html
 // https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
 
-#include <algorithm>
-#include <array>
+#if !defined(__cplusplus) || __cplusplus < 202302L
+#error "C++23 or later is required. Either get a newer compiler " \
+       "or manually edit this file to include fmtlib (https://github.com/fmtlib/fmt) " \
+       "instead of <print> and remove this check."
+#endif
+
 #include <cstring>
 #include <fstream>
 #include <gelf.h>
-#include <iostream>
 #include <libelf.h>
 #include <print>
 #include <vector>
@@ -23,7 +26,7 @@
   u8 funct3 = (ins >> 12) & 0b111;                                             \
   u8 rs1 = (ins >> 15) & 0b11111;                                              \
   u8 rs2 = (ins >> 20) & 0b11111;                                              \
-  i32 funct7 = ((i32)ins) >> 25
+  u8 funct7 = (u8)((ins >> 25) & 0b1111111)
 
 #define PARSE_B_INS(ins)                                                       \
   u8 funct3 = (ins >> 12) & 0b111;                                             \
@@ -79,6 +82,18 @@ static constexpr std::array<const char *, 32> REGS = {
     "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
+struct Ins {
+  u8 opcode;
+  u8 rd;
+  u8 funct3;
+  u8 rs1;
+  u8 rs2;
+  u8 funct7;
+  u8 shamt;
+  u8 funct6;
+  i32 imm;
+};
+
 struct Section {
   u64 offset;
   u64 size;
@@ -110,15 +125,21 @@ public:
   void disassemble_all() {
     for (m_pc = m_code_section.offset;
          m_pc < m_code_section.offset + m_code_section.size; m_pc += 4) {
-      disassemble_one();
+      disassemble_one_fetch();
     }
+  }
+
+  void disassemble_one_fetch() {
+    Ins ins = fetch_ins();
+    std::println("{} {} {} {} {} {} {} {} {}", ins.opcode, ins.rd, ins.funct3,
+                 ins.rs1, ins.rs2, ins.funct7, ins.shamt, ins.funct6, ins.imm);
   }
 
   void disassemble_one() {
     u32 ins;
     std::memcpy(&ins, m_memory.data() + m_pc, sizeof(ins));
 
-    u16 opcode = ins & 0b1111111;
+    u8 opcode = ins & 0b1111111;
 
     // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
     switch (opcode) {
@@ -149,7 +170,7 @@ public:
         std::println("addi {}, {}, {}", REGS[rd], REGS[rs1], imm);
       } else if (funct3 == 0b001) {
         u32 shamt = (ins >> 20) & 0b111111;
-        u32 funct6 = (ins >> 26) & 0b111111;
+        u8 funct6 = (ins >> 26) & 0b111111;
 
         if (funct6 == 0b000000) {
           std::println("slli {}, {}, {}", REGS[rd], REGS[rs1], shamt);
@@ -168,7 +189,7 @@ public:
       } else if (funct3 == 0b101) {
         // of course this one just has to be different
         u32 shamt = (ins >> 20) & 0b111111;
-        u32 funct6 = (ins >> 26) & 0b111111;
+        u8 funct6 = (ins >> 26) & 0b111111;
 
         if (funct6 == 0b000000) {
           std::println("srli {}, {}, {}", REGS[rd], REGS[rs1], shamt);
@@ -382,7 +403,7 @@ public:
         PARSE_I_INS(ins);
         std::println("addiw {}, {}, {}", REGS[rd], REGS[rs1], imm);
       } else if (funct3 == 0b001) {
-        PARSE_R_INS(ins);
+        PARSE_R_INS(ins); // TODO: probably wrong
         std::println("slliw {}, {}, {}", REGS[rd], REGS[rs1], rs2);
       } else if (funct3 == 0b101) {
         PARSE_R_INS(ins);
@@ -442,8 +463,7 @@ public:
   void dump() {
     std::print("REGS:");
     for (u64 i = 0; i < 32; i++) {
-      std::print(" ");
-      std::print("{}", m_regs[i]);
+      std::print(" {}", m_regs[i]);
     }
     std::println();
   }
@@ -503,7 +523,7 @@ public:
           m_regs[rd] = m_regs[rs1] + imm;
         } else if (funct3 == 0b001) { // slli
           u32 shamt = (ins >> 20) & 0b111111;
-          u32 funct6 = (ins >> 26) & 0b111111;
+          u8 funct6 = (ins >> 26) & 0b111111;
 
           if (funct6 == 0b000000) {
             m_regs[rd] = m_regs[rs1] << shamt;
@@ -520,7 +540,7 @@ public:
         } else if (funct3 == 0b101) {
           // of course this one just has to be different
           u32 shamt = (ins >> 20) & 0b111111;
-          u32 funct6 = (ins >> 26) & 0b111111;
+          u8 funct6 = (ins >> 26) & 0b111111;
 
           if (funct6 == 0b000000) { // srli
             m_regs[rd] = (u64)m_regs[rs1] >> shamt;
@@ -924,6 +944,127 @@ private:
 
     std::println(stderr, "Failed to locate .text");
     exit(1);
+  }
+
+  Ins fetch_ins() {
+    u32 ins;
+    std::memcpy(&ins, m_memory.data() + m_pc, sizeof(ins));
+
+    u8 opcode = ins & 0b1111111;
+
+    switch (opcode) {
+    case 0b1100011: {
+      u8 funct3 = (ins >> 12) & 0b111;
+      u8 rs1 = (ins >> 15) & 0b11111;
+      u8 rs2 = (ins >> 20) & 0b11111;
+      i32 imm_12 = (ins >> 31) & 0b1;
+      i32 imm_10_5 = (ins >> 25) & 0b111111;
+      i32 imm_4_1 = (ins >> 8) & 0b1111;
+      i32 imm_11 = (ins >> 7) & 0b1;
+      i32 imm =
+          (imm_12 << 12) | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1);
+      imm = (imm << 19) >> 19;
+
+      return Ins{.opcode = opcode,
+                 .funct3 = funct3,
+                 .rs1 = rs1,
+                 .rs2 = rs2,
+                 .imm = imm};
+    }; break;
+    case 0b0010011:
+    case 0b0000011:
+    case 0b1100111:
+    case 0b1110011: {
+      u8 rd = (ins >> 7) & 0b11111;
+      u8 funct3 = (ins >> 12) & 0b111;
+      u8 rs1 = (ins >> 15) & 0b11111;
+      i32 imm = ((i32)ins) >> 20;
+
+      return Ins{
+          .opcode = opcode, .rd = rd, .funct3 = funct3, .rs1 = rs1, .imm = imm};
+    }; break;
+    case 0b1101111: {
+      u8 rd = (ins >> 7) & 0b11111;
+      i32 imm_20 = (ins >> 31) & 0b1;
+      i32 imm_10_1 = (ins >> 21) & 0b1111111111;
+      i32 imm_11 = (ins >> 20) & 0b1;
+      i32 imm_19_12 = (ins >> 12) & 0b11111111;
+      i32 imm =
+          (imm_20 << 20) | (imm_19_12 << 12) | (imm_11 << 11) | (imm_10_1 << 1);
+      imm = (imm << 11) >> 11;
+
+      return Ins{.opcode = opcode, .rd = rd, .imm = imm};
+    }; break;
+    case 0b0101111:
+      std::println(stderr, "A extension not implemented yet.");
+      exit(1);
+    case 0b0110011:
+    case 0b0111011: {
+      u8 rd = (ins >> 7) & 0b11111;
+      u8 funct3 = (ins >> 12) & 0b111;
+      u8 rs1 = (ins >> 15) & 0b11111;
+      u8 rs2 = (ins >> 20) & 0b11111;
+      u8 funct7 = (u8)((ins >> 25) & 0b1111111);
+
+      return Ins{.opcode = opcode,
+                 .rd = rd,
+                 .funct3 = funct3,
+                 .rs1 = rs1,
+                 .rs2 = rs2,
+                 .funct7 = funct7};
+    }; break;
+    case 0b0011011: {
+      u8 rd = (ins >> 7) & 0b11111;
+      u8 funct3 = (ins >> 12) & 0b111;
+      u8 rs1 = (ins >> 15) & 0b11111;
+      u8 rs2 = (ins >> 20) & 0b11111;
+      u8 funct7 = (u8)((ins >> 25) & 0b1111111);
+      u8 shamt = (ins >> 20) & 0b11111;
+      i32 imm = ((i32)ins) >> 20;
+
+      return Ins{.opcode = opcode,
+                 .rd = rd,
+                 .funct3 = funct3,
+                 .rs1 = rs1,
+                 .rs2 = rs2,
+                 .funct7 = funct7,
+                 .shamt = shamt,
+                 .imm = imm};
+    }; break;
+    case 0b0000111: {
+      std::println(stderr, "F extension not implemented yet.");
+      exit(1);
+    }; break;
+    case 0b0100111: {
+      std::println(stderr, "F extension not implemented yet.");
+      exit(1);
+    }; break;
+    case 0b0100011: {
+      u8 funct3 = (ins >> 12) & 0b111;
+      u8 rs1 = (ins >> 15) & 0b11111;
+      u8 rs2 = (ins >> 20) & 0b11111;
+      i32 imm_11_5 = (ins >> 25) & 0b1111111;
+      i32 imm_4_0 = (ins >> 7) & 0b11111;
+      i32 imm = (imm_11_5 << 5) | imm_4_0;
+      imm = (imm << 20) >> 20;
+
+      return Ins{.opcode = opcode,
+                 .funct3 = funct3,
+                 .rs1 = rs1,
+                 .rs2 = rs2,
+                 .imm = imm};
+    }; break;
+    case 0b0110111:
+    case 0b0010111: {
+      u8 rd = (ins >> 7) & 0b11111;
+      i32 imm = ins >> 12;
+
+      return Ins{.opcode = opcode, .rd = rd, .imm = imm};
+    }; break;
+    default:
+      std::println(stderr, "Unrecognized opcode: {:07b}", opcode);
+      exit(1);
+    }
   }
 };
 
