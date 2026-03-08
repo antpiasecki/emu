@@ -82,8 +82,73 @@ static constexpr std::array<const char *, 32> REGS = {
     "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
+enum class Op {
+  ADD,
+  ADDI,
+  ADDIW,
+  ADDW,
+  AND,
+  ANDI,
+  AUIPC,
+  BEQ,
+  BGE,
+  BGEU,
+  BLT,
+  BLTU,
+  BNE,
+  DIV,
+  DIVU,
+  DIVUW,
+  DIVW,
+  ECALL,
+  JAL,
+  JALR,
+  LB,
+  LBU,
+  LD,
+  LH,
+  LHU,
+  LUI,
+  LW,
+  LWU,
+  MUL,
+  MULH,
+  MULHU,
+  MULW,
+  OR,
+  ORI,
+  REM,
+  REMU,
+  REMUW,
+  REMW,
+  SB,
+  SD,
+  SH,
+  SLL,
+  SLLI,
+  SLLIW,
+  SLLW,
+  SLT,
+  SLTI,
+  SLTIU,
+  SLTU,
+  SRA,
+  SRAI,
+  SRAIW,
+  SRAW,
+  SRL,
+  SRLI,
+  SRLIW,
+  SRLW,
+  SUB,
+  SUBW,
+  SW,
+  XOR,
+  XORI
+};
+
 struct Ins {
-  u8 opcode;
+  Op op;
   u8 rd;
   u8 funct3;
   u8 rs1;
@@ -131,8 +196,9 @@ public:
 
   void disassemble_one_fetch() {
     Ins ins = fetch_ins();
-    std::println("{} {} {} {} {} {} {} {} {}", ins.opcode, ins.rd, ins.funct3,
-                 ins.rs1, ins.rs2, ins.funct7, ins.shamt, ins.funct6, ins.imm);
+    std::println("{} {} {} {} {} {} {} {} {}", static_cast<i32>(ins.op), ins.rd,
+                 ins.funct3, ins.rs1, ins.rs2, ins.funct7, ins.shamt,
+                 ins.funct6, ins.imm);
   }
 
   void disassemble_one() {
@@ -398,19 +464,19 @@ public:
       }
     }; break;
     case 0b0011011: {
-      u8 funct3 = (ins >> 12) & 0b111;
+      PARSE_I_INS(ins);
       if (funct3 == 0b000) {
-        PARSE_I_INS(ins);
         std::println("addiw {}, {}, {}", REGS[rd], REGS[rs1], imm);
       } else if (funct3 == 0b001) {
-        PARSE_R_INS(ins); // TODO: probably wrong
-        std::println("slliw {}, {}, {}", REGS[rd], REGS[rs1], rs2);
+        u32 shamt = (ins >> 20) & 0b11111;
+        std::println("slliw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
       } else if (funct3 == 0b101) {
-        PARSE_R_INS(ins);
+        u32 shamt = (ins >> 20) & 0b11111;
+        u8 funct7 = (ins >> 25) & 0b1111111;
         if (funct7 == 0b0000000) {
-          std::println("srliw {}, {}, {}", REGS[rd], REGS[rs1], rs2);
+          std::println("srliw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
         } else if (funct7 == 0b0100000) {
-          std::println("sraiw {}, {}, {}", REGS[rd], REGS[rs1], rs2);
+          std::println("sraiw {}, {}, {}", REGS[rd], REGS[rs1], shamt);
         } else {
           std::println(stderr,
                        "R-type 4: funct3=101: unrecognized funct7: {:b}",
@@ -857,15 +923,16 @@ public:
         PARSE_I_INS(ins);
         if (funct3 == 0b000) { // addiw
           m_regs[rd] = (i32)m_regs[rs1] + (i32)imm;
-        } else if (funct3 == 0b001) {
+        } else if (funct3 == 0b001) { // slliw
           u32 shamt = (ins >> 20) & 0b11111;
           m_regs[rd] = (i32)m_regs[rs1] << shamt;
         } else if (funct3 == 0b101) {
-          PARSE_R_INS(ins);
+          u32 shamt = (ins >> 20) & 0b11111;
+          u8 funct7 = (ins >> 25) & 0b1111111;
           if (funct7 == 0b0000000) { // srliw
-            m_regs[rd] = (i32)((u32)m_regs[rs1] >> rs2);
+            m_regs[rd] = (i32)((u32)m_regs[rs1] >> shamt);
           } else if (funct7 == 0b0100000) { // sraiw
-            m_regs[rd] = (i32)m_regs[rs1] >> rs2;
+            m_regs[rd] = (i32)m_regs[rs1] >> shamt;
           } else {
             std::println(stderr,
                          "R-type 4: funct3=101: unrecognized funct7: {:b}",
@@ -947,89 +1014,331 @@ private:
   }
 
   Ins fetch_ins() {
-    u32 ins;
-    std::memcpy(&ins, m_memory.data() + m_pc, sizeof(ins));
+    u32 raw;
+    std::memcpy(&raw, m_memory.data() + m_pc, sizeof(raw));
 
-    u8 opcode = ins & 0b1111111;
+    u8 opcode = raw & 0b1111111;
+
+    Ins i;
 
     switch (opcode) {
     case 0b1100011: {
-      u8 funct3 = (ins >> 12) & 0b111;
-      u8 rs1 = (ins >> 15) & 0b11111;
-      u8 rs2 = (ins >> 20) & 0b11111;
-      i32 imm_12 = (ins >> 31) & 0b1;
-      i32 imm_10_5 = (ins >> 25) & 0b111111;
-      i32 imm_4_1 = (ins >> 8) & 0b1111;
-      i32 imm_11 = (ins >> 7) & 0b1;
-      i32 imm =
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+      i32 imm_12 = (raw >> 31) & 0b1;
+      i32 imm_10_5 = (raw >> 25) & 0b111111;
+      i32 imm_4_1 = (raw >> 8) & 0b1111;
+      i32 imm_11 = (raw >> 7) & 0b1;
+      i.imm =
           (imm_12 << 12) | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1);
-      imm = (imm << 19) >> 19;
+      i.imm = (i.imm << 19) >> 19;
 
-      return Ins{.opcode = opcode,
-                 .funct3 = funct3,
-                 .rs1 = rs1,
-                 .rs2 = rs2,
-                 .imm = imm};
+      if (i.funct3 == 0b000) {
+        i.op = Op::BEQ;
+      } else if (i.funct3 == 0b001) {
+        i.op = Op::BNE;
+      } else if (i.funct3 == 0b100) {
+        i.op = Op::BLT;
+      } else if (i.funct3 == 0b101) {
+        i.op = Op::BGE;
+      } else if (i.funct3 == 0b110) {
+        i.op = Op::BLTU;
+      } else if (i.funct3 == 0b111) {
+        i.op = Op::BGEU;
+      } else {
+        std::println(stderr, "B-type: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
-    case 0b0010011:
-    case 0b0000011:
-    case 0b1100111:
-    case 0b1110011: {
-      u8 rd = (ins >> 7) & 0b11111;
-      u8 funct3 = (ins >> 12) & 0b111;
-      u8 rs1 = (ins >> 15) & 0b11111;
-      i32 imm = ((i32)ins) >> 20;
+    case 0b0010011: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.imm = ((i32)raw) >> 20;
+      i.shamt = (raw >> 20) & 0b111111;
+      i.funct6 = (raw >> 26) & 0b111111;
 
-      return Ins{
-          .opcode = opcode, .rd = rd, .funct3 = funct3, .rs1 = rs1, .imm = imm};
+      if (i.funct3 == 0b000) {
+        i.op = Op::ADDI;
+      } else if (i.funct3 == 0b001) {
+        if (i.funct6 == 0b000000) {
+          i.op = Op::SLLI;
+        } else {
+          std::println(stderr,
+                       "I-type 1: funct3=001: unrecognized funct6: {:b}",
+                       i.funct6);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b010) {
+        i.op = Op::SLTI;
+      } else if (i.funct3 == 0b011) {
+        i.op = Op::SLTIU;
+      } else if (i.funct3 == 0b100) {
+        i.op = Op::XORI;
+      } else if (i.funct3 == 0b101) {
+        i.shamt = (raw >> 20) & 0b111111;
+        i.funct6 = (raw >> 26) & 0b111111;
+
+        if (i.funct6 == 0b000000) {
+          i.op = Op::SRLI;
+        } else if (i.funct6 == 0b010000) {
+          i.op = Op::SRAI;
+        } else {
+          std::println(stderr,
+                       "I-type 1: funct3=101: unrecognized funct6: {:b}",
+                       i.funct6);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b110) {
+        i.op = Op::ORI;
+      } else if (i.funct3 == 0b111) {
+        i.op = Op::ANDI;
+      } else {
+        std::println(stderr, "I-type 1: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
+    }; break;
+    case 0b0000011: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.imm = ((i32)raw) >> 20;
+
+      if (i.funct3 == 0b000) {
+        i.op = Op::LB;
+      } else if (i.funct3 == 0b001) {
+        i.op = Op::LH;
+      } else if (i.funct3 == 0b010) {
+        i.op = Op::LW;
+      } else if (i.funct3 == 0b011) {
+        i.op = Op::LD;
+      } else if (i.funct3 == 0b100) {
+        i.op = Op::LBU;
+      } else if (i.funct3 == 0b101) {
+        i.op = Op::LHU;
+      } else if (i.funct3 == 0b110) {
+        i.op = Op::LWU;
+      } else {
+        std::println(stderr, "I-type 2: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
+    }; break;
+    case 0b1100111: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.imm = ((i32)raw) >> 20;
+      i.op = Op::JALR;
+    }; break;
+    case 0b1110011: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.imm = ((i32)raw) >> 20;
+
+      if (i.funct3 == 0b000) {
+        if (i.imm == 0) {
+          i.op = Op::ECALL;
+        } else {
+          std::println(stderr, "I-type 4: funct3=000 unrecognized imm: {:b}",
+                       i.imm);
+          exit(1);
+        }
+      } else {
+        std::println(stderr, "I-type 4: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
     case 0b1101111: {
-      u8 rd = (ins >> 7) & 0b11111;
-      i32 imm_20 = (ins >> 31) & 0b1;
-      i32 imm_10_1 = (ins >> 21) & 0b1111111111;
-      i32 imm_11 = (ins >> 20) & 0b1;
-      i32 imm_19_12 = (ins >> 12) & 0b11111111;
-      i32 imm =
+      i.rd = (raw >> 7) & 0b11111;
+      i32 imm_20 = (raw >> 31) & 0b1;
+      i32 imm_10_1 = (raw >> 21) & 0b1111111111;
+      i32 imm_11 = (raw >> 20) & 0b1;
+      i32 imm_19_12 = (raw >> 12) & 0b11111111;
+      i.imm =
           (imm_20 << 20) | (imm_19_12 << 12) | (imm_11 << 11) | (imm_10_1 << 1);
-      imm = (imm << 11) >> 11;
+      i.imm = (i.imm << 11) >> 11;
+      i.op = Op::JAL;
+    }; break;
+    case 0b0110011: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+      i.funct7 = (u8)((raw >> 25) & 0b1111111);
 
-      return Ins{.opcode = opcode, .rd = rd, .imm = imm};
+      if (i.funct3 == 0b000) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::ADD;
+        } else if (i.funct7 == 0b0100000) {
+          i.op = Op::SUB;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::MUL;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b000: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b001) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SLL;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::MULH;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b001: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b010) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SLT;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b010: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b011) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SLTU;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::MULHU;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b011: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b100) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::XOR;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::DIV;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b100: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b101) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SRL;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::DIVU;
+        } else if (i.funct7 == 0b0100000) {
+          i.op = Op::SRA;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b101: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b110) {
+        if (i.funct7 == 0b0000001) {
+          i.op = Op::REM;
+        } else if (i.funct7 == 0b0000000) {
+          i.op = Op::OR;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b110: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b111) {
+        if (i.funct7 == 0b000) {
+          i.op = Op::AND;
+        } else if (i.funct7 == 0b001) {
+          i.op = Op::REMU;
+        } else {
+          std::println(stderr,
+                       "R-type 1: funct3=0b111: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else {
+        std::println(stderr, "R-type 1: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
     case 0b0101111:
       std::println(stderr, "A extension not implemented yet.");
       exit(1);
-    case 0b0110011:
     case 0b0111011: {
-      u8 rd = (ins >> 7) & 0b11111;
-      u8 funct3 = (ins >> 12) & 0b111;
-      u8 rs1 = (ins >> 15) & 0b11111;
-      u8 rs2 = (ins >> 20) & 0b11111;
-      u8 funct7 = (u8)((ins >> 25) & 0b1111111);
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+      i.funct7 = (u8)((raw >> 25) & 0b1111111);
 
-      return Ins{.opcode = opcode,
-                 .rd = rd,
-                 .funct3 = funct3,
-                 .rs1 = rs1,
-                 .rs2 = rs2,
-                 .funct7 = funct7};
+      if (i.funct3 == 0b000) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::ADDW;
+        } else if (i.funct7 == 0b0100000) {
+          i.op = Op::SUBW;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::MULW;
+        } else {
+          std::println(stderr,
+                       "R-type 3: funct3=000: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b001) {
+        i.op = Op::SLLW;
+      } else if (i.funct3 == 0b100) {
+        i.op = Op::DIVW;
+      } else if (i.funct3 == 0b101) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SRLW;
+        } else if (i.funct7 == 0b0100000) {
+          i.op = Op::SRAW;
+        } else if (i.funct7 == 0b0000001) {
+          i.op = Op::DIVUW;
+        } else {
+          std::println(stderr,
+                       "R-type 3: funct3=101: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else if (i.funct3 == 0b110) {
+        i.op = Op::REMW;
+      } else if (i.funct3 == 0b111) {
+        i.op = Op::REMUW;
+      } else {
+        std::println(stderr, "R-type 3: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
     case 0b0011011: {
-      u8 rd = (ins >> 7) & 0b11111;
-      u8 funct3 = (ins >> 12) & 0b111;
-      u8 rs1 = (ins >> 15) & 0b11111;
-      u8 rs2 = (ins >> 20) & 0b11111;
-      u8 funct7 = (u8)((ins >> 25) & 0b1111111);
-      u8 shamt = (ins >> 20) & 0b11111;
-      i32 imm = ((i32)ins) >> 20;
+      i.rd = (raw >> 7) & 0b11111;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.imm = ((i32)raw) >> 20;
+      i.shamt = (raw >> 20) & 0b11111;
+      i.funct7 = (raw >> 25) & 0b1111111;
 
-      return Ins{.opcode = opcode,
-                 .rd = rd,
-                 .funct3 = funct3,
-                 .rs1 = rs1,
-                 .rs2 = rs2,
-                 .funct7 = funct7,
-                 .shamt = shamt,
-                 .imm = imm};
+      if (i.funct3 == 0b000) {
+        i.op = Op::ADDIW;
+      } else if (i.funct3 == 0b001) {
+        i.op = Op::SLLIW;
+      } else if (i.funct3 == 0b101) {
+        if (i.funct7 == 0b0000000) {
+          i.op = Op::SRLIW;
+        } else if (i.funct7 == 0b0100000) {
+          i.op = Op::SRAIW;
+        } else {
+          std::println(stderr,
+                       "R-type 4: funct3=101: unrecognized funct7: {:b}",
+                       i.funct7);
+          exit(1);
+        }
+      } else {
+        std::println(stderr, "R-type 4: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
     case 0b0000111: {
       std::println(stderr, "F extension not implemented yet.");
@@ -1040,31 +1349,43 @@ private:
       exit(1);
     }; break;
     case 0b0100011: {
-      u8 funct3 = (ins >> 12) & 0b111;
-      u8 rs1 = (ins >> 15) & 0b11111;
-      u8 rs2 = (ins >> 20) & 0b11111;
-      i32 imm_11_5 = (ins >> 25) & 0b1111111;
-      i32 imm_4_0 = (ins >> 7) & 0b11111;
-      i32 imm = (imm_11_5 << 5) | imm_4_0;
-      imm = (imm << 20) >> 20;
+      i.funct3 = (raw >> 12) & 0b111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+      i32 imm_11_5 = (raw >> 25) & 0b1111111;
+      i32 imm_4_0 = (raw >> 7) & 0b11111;
+      i.imm = (imm_11_5 << 5) | imm_4_0;
+      i.imm = (i.imm << 20) >> 20;
 
-      return Ins{.opcode = opcode,
-                 .funct3 = funct3,
-                 .rs1 = rs1,
-                 .rs2 = rs2,
-                 .imm = imm};
+      if (i.funct3 == 0b000) {
+        i.op = Op::SB;
+      } else if (i.funct3 == 0b001) {
+        i.op = Op::SH;
+      } else if (i.funct3 == 0b010) {
+        i.op = Op::SW;
+      } else if (i.funct3 == 0b011) {
+        i.op = Op::SD;
+      } else {
+        std::println(stderr, "S-type: unrecognized funct3: {:03b}", i.funct3);
+        exit(1);
+      }
     }; break;
-    case 0b0110111:
+    case 0b0110111: {
+      i.rd = (raw >> 7) & 0b11111;
+      i.imm = raw >> 12;
+      i.op = Op::LUI;
+    }; break;
     case 0b0010111: {
-      u8 rd = (ins >> 7) & 0b11111;
-      i32 imm = ins >> 12;
-
-      return Ins{.opcode = opcode, .rd = rd, .imm = imm};
+      i.rd = (raw >> 7) & 0b11111;
+      i.imm = raw >> 12;
+      i.op = Op::AUIPC;
     }; break;
     default:
       std::println(stderr, "Unrecognized opcode: {:07b}", opcode);
       exit(1);
     }
+
+    return i;
   }
 };
 
