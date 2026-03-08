@@ -1,29 +1,27 @@
 // https://docs.riscv.org/reference/isa/unpriv/rv-32-64g.html
 // https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
 
-#if !defined(__cplusplus) || __cplusplus < 201703L
-#error "This file requires at least C++17"
-#endif
-
 #include <array>
+#include <cstring>
 #include <fstream>
 #include <gelf.h>
 #include <iostream>
 #include <libelf.h>
 #include <vector>
 
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
+using i8 = int8_t;
+using i16 = int16_t;
+using i32 = int32_t;
+using i64 = int64_t;
+using u8 = uint8_t;
+using u16 = uint16_t;
+using u32 = uint32_t;
+using u64 = uint64_t;
+static_assert(sizeof(size_t) == sizeof(u64), "size_t must be 64-bit");
 
 static constexpr u64 MEMORY_SIZE = 20 * 1024 * 1024; // should be enough
 
-static std::array<const char *, 32> REGS = {
+static constexpr std::array<const char *, 32> REGS = {
     "zero", "ra", "sp", "gp", "tp",  "t0",  "t1", "t2", "fp", "s1", "a0",
     "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
@@ -36,13 +34,56 @@ struct Section {
 
 class RISCV64 {
 public:
-  RISCV64(const std::vector<char> &exe_bytes) {}
+  RISCV64(const std::vector<char> &exe_bytes) {
+    Elf *elf =
+        elf_memory(const_cast<char *>(exe_bytes.data()), exe_bytes.size());
+    GElf_Ehdr ehdr;
+    gelf_getehdr(elf, &ehdr);
+
+    m_code_section = get_code_section(elf, ehdr);
+    m_pc = m_code_section.offset;
+
+    for (u64 i = 0; i < ehdr.e_phnum; i++) {
+      GElf_Phdr phdr;
+      gelf_getphdr(elf, i, &phdr);
+      if (phdr.p_type == PT_LOAD) {
+        memcpy(m_memory.data() + phdr.p_vaddr, exe_bytes.data() + phdr.p_offset,
+               phdr.p_filesz);
+      }
+    }
+    elf_end(elf);
+  }
 
 private:
-  std::array<u8, MEMORY_SIZE> m_memory;
+  std::vector<u8> m_memory = std::vector<u8>(MEMORY_SIZE, 0);
   u64 m_pc;
-  i64 m_regs[32];
+  std::array<i64, 32> m_regs = {0};
   Section m_code_section;
+
+  static Section get_code_section(Elf *elf, GElf_Ehdr ehdr) {
+    u64 str_table_index;
+    if (elf_getshdrstrndx(elf, &str_table_index) != 0) {
+      std::cerr << "elf_getshdrstrndx failed: " << elf_errmsg(-1) << "\n";
+      exit(1);
+    }
+
+    Elf_Scn *section = nullptr;
+    while ((section = elf_nextscn(elf, section)) != nullptr) {
+      GElf_Shdr header;
+      if (gelf_getshdr(section, &header) != &header)
+        continue;
+
+      const char *name = elf_strptr(elf, str_table_index, header.sh_name);
+      if (name && std::string_view(name) == ".text") {
+        return Section{.offset = header.sh_addr,
+                       .size = header.sh_size,
+                       .entrypoint = ehdr.e_entry};
+      }
+    }
+
+    std::cerr << "Failed to locate .text\n";
+    exit(1);
+  }
 };
 
 int main(int argc, char *argv[]) {
@@ -78,14 +119,8 @@ int main(int argc, char *argv[]) {
 
   exe_bytes = {};
 
-  r.disassemble_all();
-  std::cout << "END DISASSEMBLY\n";
-
-  // for (r.pc = r.code_section.offset;
-  //      r.pc < r.code_section.offset + r.code_section.size; r.pc += 4) {
-  //   riscv64_disassemble_one(&r);
-  // }
+  // r.disassemble_all();
   // printf("END DISASSEMBLY\n");
 
-  // riscv64_execute(&r);
+  // r.execute();
 }
