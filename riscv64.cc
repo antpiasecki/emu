@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <gelf.h>
+#include <iostream>
 #include <libelf.h>
 #include <print>
 #include <vector>
@@ -82,7 +83,7 @@ static constexpr std::array<const char *, 32> REGS = {
     "a1",   "a2", "a3", "a4", "a5",  "a6",  "a7", "s2", "s3", "s4", "s5",
     "s6",   "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 
-enum class Op {
+enum Op {
   INVALID,
 
   ADD,
@@ -241,7 +242,7 @@ public:
   void disassemble_one() {
     Ins ins = fetch_ins();
 
-    const OpDef &def = OP_TABLE[static_cast<u64>(ins.op)];
+    const OpDef &def = OP_TABLE[ins.op];
 
     switch (def.format) {
     case Format::R:
@@ -296,440 +297,342 @@ public:
     while (m_pc < m_code_section.offset + m_code_section.size) {
       m_regs[0] = 0; // clear the zero register
 
-      u32 ins;
-      std::memcpy(&ins, m_memory.data() + m_pc, sizeof(ins));
+      Ins i = fetch_ins();
 
-      u16 opcode = ins & 0b1111111;
-
-      // https://stackoverflow.com/questions/62939410/how-can-i-find-out-the-instruction-format-of-a-risc-v-instruction
-      switch (opcode) {
-      case 0b1100011: {
-        PARSE_B_INS(ins);
-
-        if (funct3 == 0b000) { // beq
-          if (m_regs[rs1] == m_regs[rs2]) {
-            m_pc += imm;
-            continue;
-          }
-        } else if (funct3 == 0b001) { // bne
-          if (m_regs[rs1] != m_regs[rs2]) {
-            m_pc += imm;
-            continue;
-          }
-        } else if (funct3 == 0b101) { // bge
-          if (m_regs[rs1] >= m_regs[rs2]) {
-            m_pc += imm;
-            continue;
-          }
-        } else if (funct3 == 0b100) { // blt
-          if (m_regs[rs1] < m_regs[rs2]) {
-            m_pc += imm;
-            continue;
-          }
-        } else if (funct3 == 0b110) { // bltu
-          if ((u64)m_regs[rs1] < (u64)m_regs[rs2]) {
-            m_pc += imm;
-            continue;
-          }
-        } else {
-          std::println(stderr, "B-type: unrecognized funct3: {:03b}", funct3);
-          exit(1);
+      switch (i.op) {
+      case Op::INVALID: {
+        std::println(stderr, "Tried to execute Op::INVALID");
+        exit(1);
+      }; break;
+      case Op::ADD: {
+        m_regs[i.rd] = m_regs[i.rs1] + m_regs[i.rs2];
+      }; break;
+      case Op::ADDI: {
+        m_regs[i.rd] = m_regs[i.rs1] + i.imm;
+      }; break;
+      case Op::ADDIW: {
+        m_regs[i.rd] = (i32)m_regs[i.rs1] + (i32)i.imm;
+      }; break;
+      case Op::ADDW: {
+        m_regs[i.rd] = (i32)(m_regs[i.rs1] + m_regs[i.rs2]);
+      }; break;
+      case Op::AND: {
+        m_regs[i.rd] = m_regs[i.rs1] & m_regs[i.rs2];
+      }; break;
+      case Op::ANDI: {
+        std::println(stderr, "ANDI unimplemented");
+        exit(1);
+      }; break;
+      case Op::AUIPC: {
+        m_regs[i.rd] = m_pc + ((i64)i.imm << 12);
+      }; break;
+      case Op::BEQ: {
+        if (m_regs[i.rs1] == m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
         }
       }; break;
-      case 0b0010011: {
-        PARSE_I_INS(ins);
-
-        if (funct3 == 0b000) { // addi
-          m_regs[rd] = m_regs[rs1] + imm;
-        } else if (funct3 == 0b001) { // slli
-          u32 shamt = (ins >> 20) & 0b111111;
-          u8 funct6 = (ins >> 26) & 0b111111;
-
-          if (funct6 == 0b000000) {
-            m_regs[rd] = m_regs[rs1] << shamt;
-          } else {
-            std::println(stderr,
-                         "I-type 1: funct3=001: unrecognized funct6: {:b}",
-                         funct6);
+      case Op::BGE: {
+        if (m_regs[i.rs1] >= m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::BGEU: {
+        std::println(stderr, "BGEU unimplemented");
+        exit(1);
+      }; break;
+      case Op::BLT: {
+        if (m_regs[i.rs1] < m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::BLTU: {
+        if ((u64)m_regs[i.rs1] < (u64)m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::BNE: {
+        if (m_regs[i.rs1] != m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::DIV: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = -1;
+        } else {
+          m_regs[i.rd] = m_regs[i.rs1] / m_regs[i.rs2];
+        }
+      }; break;
+      case Op::DIVU: {
+        std::println(stderr, "DIVU unimplemented");
+        exit(1);
+      }; break;
+      case Op::DIVUW: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = -1LL;
+        } else {
+          m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] / (u32)m_regs[i.rs2]);
+        }
+      }; break;
+      case Op::DIVW: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = (u64)(i64)(-1);
+        } else {
+          m_regs[i.rd] = (i64)(m_regs[i.rs1] / m_regs[i.rs2]);
+        }
+      }; break;
+      case Op::ECALL: {
+        // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
+        switch (m_regs[17]) {
+        case 63: { // read
+          if (m_regs[10] != 0) {
+            std::println(stderr, "read syscall implemented only for stdin.");
             exit(1);
           }
-        } else if (funct3 == 0b011) { // sltiu
-          m_regs[rd] = ((u64)m_regs[rs1] < (u64)(i64)imm) ? 1 : 0;
-        } else if (funct3 == 0b100) { // xori
-          m_regs[rd] = m_regs[rs1] ^ imm;
-        } else if (funct3 == 0b101) {
-          // of course this one just has to be different
-          u32 shamt = (ins >> 20) & 0b111111;
-          u8 funct6 = (ins >> 26) & 0b111111;
 
-          if (funct6 == 0b000000) { // srli
-            m_regs[rd] = (u64)m_regs[rs1] >> shamt;
-          } else if (funct6 == 0b010000) { // srai
-            m_regs[rd] = (i64)m_regs[rs1] >> shamt;
-          } else {
-            std::println(stderr,
-                         "I-type 1: funct3=101: unrecognized funct6: {:b}",
-                         funct6);
+          u64 start = m_regs[11];
+          u64 count = m_regs[12];
+          u64 bytes_read = 0;
+
+          for (u64 i = 0; i < count; i++) {
+            char c;
+            if (!std::cin.get(c))
+              break;
+            m_memory[start + i] = (u8)c;
+            bytes_read++;
+            if (c == '\n')
+              break;
+          }
+
+          m_regs[10] = bytes_read;
+        }; break;
+        case 64: { // write
+          if (m_regs[10] != 1) {
+            std::println(stderr, "write syscall implemented only for stdout.");
             exit(1);
           }
-        } else if (funct3 == 0b111) {
-          m_regs[rd] = m_regs[rs1] & imm;
-        } else {
-          std::println(stderr, "I-type 1: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
-      }; break;
-      case 0b0000011: {
-        PARSE_I_INS(ins);
 
-        if (funct3 == 0b000) { // lb
-          m_regs[rd] = (i8)m_memory[m_regs[rs1] + imm];
-        } else if (funct3 == 0b001) { // lh
-          m_regs[rd] = *(i16 *)&m_memory[m_regs[rs1] + imm];
-        } else if (funct3 == 0b010) { // lw
-          m_regs[rd] = *(i32 *)&m_memory[m_regs[rs1] + imm];
-        } else if (funct3 == 0b011) { // ld
-          m_regs[rd] = *(u64 *)&m_memory[m_regs[rs1] + imm];
-        } else if (funct3 == 0b100) { // lbu
-          m_regs[rd] = m_memory[m_regs[rs1] + imm];
-        } else {
-          std::println(stderr, "I-type 2: unrecognized funct3: {:03b}", funct3);
+          u64 start = m_regs[11];
+          u64 end = m_regs[11] + m_regs[12];
+
+          for (u64 i = start; i < end; i++) {
+            std::cout.put(m_memory[i]);
+          }
+        }; break;
+        case 93: { // exit
+          std::println("Program exited with code {}.", m_regs[10]);
+          return;
+        }; break;
+        case 169: { // gettimeofday
+                    // TODO: actually return the time
+          i64 tv_addr = m_regs[10];
+          i64 tz_addr = m_regs[11];
+
+          u8 tv_buf[16] = {
+              0xD2, 0x02, 0x96, 0x49,
+              0x00, 0x00, 0x00, 0x00, // tv_sec = 1234567890
+              0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x00, 0x00, // tv_usec = 0
+          };
+          memcpy(&m_memory[tv_addr], tv_buf, 16);
+
+          memset(&m_memory[tz_addr], 0, 8);
+
+          m_regs[10] = 0;
+        }; break;
+        default:
+          std::println(stderr, "Unimplemented syscall: {}", m_regs[17]);
           exit(1);
         }
       }; break;
-      case 0b1100111: { // jalr
-        PARSE_I_INS(ins);
-        u64 target = (m_regs[rs1] + imm) & ~(u64)1;
-        m_regs[rd] = m_pc + 4;
+      case Op::JAL: {
+        m_regs[i.rd] = m_pc + 4;
+        m_pc += i.imm;
+        continue;
+      }; break;
+      case Op::JALR: {
+        u64 target = (m_regs[i.rs1] + i.imm) & ~(u64)1;
+        m_regs[i.rd] = m_pc + 4;
         m_pc = target;
         continue;
       }; break;
-      case 0b1110011: {
-        PARSE_I_INS(ins);
-
-        if (funct3 == 0b000) {
-          if (imm == 0) { // ecall
-            // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
-            switch (m_regs[17]) {
-            case 63: { // read
-              if (m_regs[10] != 0) {
-                std::println(stderr,
-                             "read syscall implemented only for stdin.");
-                exit(1);
-              }
-
-              u64 start = m_regs[11];
-              u64 count = m_regs[12];
-              u64 bytes_read = 0;
-
-              for (u64 i = 0; i < count; i++) {
-                int c = getchar();
-                if (c == EOF)
-                  break;
-                m_memory[start + i] = (u8)c;
-                bytes_read++;
-                if (c == '\n')
-                  break;
-              }
-
-              m_regs[10] = bytes_read;
-            }; break;
-            case 64: { // write
-              if (m_regs[10] != 1) {
-                std::println(stderr,
-                             "write syscall implemented only for stdout.");
-                exit(1);
-              }
-
-              u64 start = m_regs[11];
-              u64 end = m_regs[11] + m_regs[12];
-
-              for (u64 i = start; i < end; i++) {
-                putchar(m_memory[i]);
-              }
-            }; break;
-            case 93: { // exit
-              std::println("Program exited with code {}.", m_regs[10]);
-              return;
-            }; break;
-            case 169: { // gettimeofday
-                        // TODO: actually return the time
-              i64 tv_addr = m_regs[10];
-              i64 tz_addr = m_regs[11];
-
-              u8 tv_buf[16] = {
-                  0xD2, 0x02, 0x96, 0x49,
-                  0x00, 0x00, 0x00, 0x00, // tv_sec = 1234567890
-                  0x00, 0x00, 0x00, 0x00,
-                  0x00, 0x00, 0x00, 0x00, // tv_usec = 0
-              };
-              memcpy(&m_memory[tv_addr], tv_buf, 16);
-
-              memset(&m_memory[tz_addr], 0, 8);
-
-              m_regs[10] = 0;
-            }; break;
-            default:
-              std::println(stderr, "Unimplemented syscall: {}", m_regs[17]);
-              exit(1);
-            }
-            break;
-          } else {
-            std::println(stderr, "I-type 4: funct3=000 unrecognized imm: {:b}",
-                         imm);
-            exit(1);
-          };
-          break;
-        } else {
-          std::println(stderr, "I-type 4: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
+      case Op::LB: {
+        m_regs[i.rd] = (i8)m_memory[m_regs[i.rs1] + i.imm];
       }; break;
-      case 0b1101111: { // jal
-        PARSE_J_INS(ins);
-        m_regs[rd] = m_pc + 4;
-        m_pc += imm;
-        continue;
+      case Op::LBU: {
+        m_regs[i.rd] = m_memory[m_regs[i.rs1] + i.imm];
       }; break;
-      case 0b0110011: {
-        PARSE_R_INS(ins);
-        if (funct3 == 0b000) {
-          if (funct7 == 0b0000000) { // add
-            m_regs[rd] = m_regs[rs1] + m_regs[rs2];
-          } else if (funct7 == 0b0100000) { // sub
-            m_regs[rd] = m_regs[rs1] - m_regs[rs2];
-          } else if (funct7 == 0b0000001) { // mul
-            m_regs[rd] = m_regs[rs1] * m_regs[rs2];
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b000: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b001) {
-          if (funct7 == 0b0000001) { // mulh
-            i64 a_hi = m_regs[rs1] >> 32;
-            i64 b_hi = m_regs[rs2] >> 32;
-            u64 a_lo = (u32)m_regs[rs1];
-            u64 b_lo = (u32)m_regs[rs2];
-            u64 p0 = a_lo * b_lo;
-            i64 p1 = a_hi * b_lo;
-            i64 p2 = b_hi * a_lo;
-            i64 p3 = a_hi * b_hi;
-            i64 carry = (p0 >> 32);
-            i64 mid = p1 + p2 + carry;
-            m_regs[rd] = p3 + (mid >> 32);
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b001: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b010) {
-          if (funct7 == 0b0000000) { // slt
-            m_regs[rd] = (m_regs[rs1] < m_regs[rs2]) ? 1 : 0;
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b010: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b011) {
-          if (funct7 == 0b0000000) { // sltu
-            m_regs[rd] = ((u64)m_regs[rs1] < (u64)m_regs[rs2]) ? 1 : 0;
-          } else if (funct7 == 0b0000001) { // mulhu
-            u64 a = m_regs[rs1];
-            u64 b = m_regs[rs2];
-            u64 a_lo = a & 0xffffffff;
-            u64 a_hi = a >> 32;
-            u64 b_lo = b & 0xffffffff;
-            u64 b_hi = b >> 32;
-            u64 lo_lo = a_lo * b_lo;
-            u64 hi_lo = a_hi * b_lo;
-            u64 lo_hi = a_lo * b_hi;
-            u64 hi_hi = a_hi * b_hi;
-            u64 mid =
-                (lo_lo >> 32) + (hi_lo & 0xffffffff) + (lo_hi & 0xffffffff);
-            m_regs[rd] = hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (mid >> 32);
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b011: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b100) {
-          if (funct7 == 0b0000000) { // xor
-            m_regs[rd] = m_regs[rs1] ^ m_regs[rs2];
-          } else if (funct7 == 0b0000001) { // div
-            if (m_regs[rs2] == 0) {
-              m_regs[rd] = -1;
-            } else {
-              m_regs[rd] = m_regs[rs1] / m_regs[rs2];
-            }
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b100: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b110) {
-          if (funct7 == 0b0000001) { // rem
-            if (m_regs[rs2] == 0) {
-              m_regs[rd] = m_regs[rs1];
-            } else {
-              m_regs[rd] = m_regs[rs1] % m_regs[rs2];
-            }
-          } else if (funct7 == 0b0000000) { // or
-            m_regs[rd] = m_regs[rs1] | m_regs[rs2];
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b110: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b111) {
-          if (funct7 == 0b000) { // and
-            m_regs[rd] = m_regs[rs1] & m_regs[rs2];
-          } else if (funct7 == 0b001) { // remu
-            if (m_regs[rs2] == 0) {
-              m_regs[rd] = m_regs[rs1];
-            } else {
-              m_regs[rd] = (u64)m_regs[rs1] % (u64)m_regs[rs2];
-            }
-          } else {
-            std::println(stderr,
-                         "R-type 1: funct3=0b111: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else {
-          std::println(stderr, "R-type 1: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
+      case Op::LD: {
+        m_regs[i.rd] = *(u64 *)&m_memory[m_regs[i.rs1] + i.imm];
       }; break;
-      case 0b0101111: {
-        std::println(stderr, "A extension not implemented yet.");
+      case Op::LH: {
+        m_regs[i.rd] = *(i16 *)&m_memory[m_regs[i.rs1] + i.imm];
+      }; break;
+      case Op::LHU: {
+        std::println(stderr, "LHU unimplemented");
         exit(1);
       }; break;
-      case 0b0111011: {
-        PARSE_R_INS(ins);
-        if (funct3 == 0b000) {
-          if (funct7 == 0b0000000) { // addw
-            m_regs[rd] = (i32)(m_regs[rs1] + m_regs[rs2]);
-          } else if (funct7 == 0b0100000) { // subw
-            m_regs[rd] = (i32)(m_regs[rs1] - m_regs[rs2]);
-          } else if (funct7 == 0b0000001) { // mulw
-            m_regs[rd] = (i32)(m_regs[rs1] * m_regs[rs2]);
-          } else {
-            std::println(stderr,
-                         "R-type 3: funct3=000: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b001) {
-          if (funct7 == 0b0000000) { // sllw
-            m_regs[rd] =
-                (i32)(u32)((u32)m_regs[rs1] << ((u32)m_regs[rs2] & 0b11111));
-          } else {
-            std::println(stderr,
-                         "R-type 3: funct3=001: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b100) { // divw
-          i32 a = m_regs[rs1];
-          i32 b = m_regs[rs2];
-          if (b == 0) {
-            m_regs[rd] = (u64)(i64)(-1);
-          } else {
-            m_regs[rd] = (i64)(a / b);
-          }
-        } else if (funct3 == 0b101) {
-          if (funct7 == 0b0000000) { // srlw
-            m_regs[rd] =
-                (i32)((u32)m_regs[rs1] >> ((u32)m_regs[rs2] & 0b11111));
-          } else if (funct7 == 0b0100000) { // sraw
-            m_regs[rd] = ((i32)m_regs[rs1]) >> ((u32)m_regs[rs2] & 0b11111);
-          } else if (funct7 == 0b0000001) { // divuw
-            if (m_regs[rs2] == 0) {
-              m_regs[rd] = -1LL;
-            } else {
-              m_regs[rd] = (i32)((u32)m_regs[rs1] / (u32)m_regs[rs2]);
-            }
-          } else {
-            std::println(stderr,
-                         "R-type 3: funct3=101: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else if (funct3 == 0b111) { // remuw
-          if (m_regs[rs2] == 0) {
-            m_regs[rd] = (i32)m_regs[rs1];
-          } else {
-            m_regs[rd] = (i32)((u32)m_regs[rs1] % (u32)m_regs[rs2]);
-          }
-        } else {
-          std::println(stderr, "R-type 3: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
+      case Op::LUI: {
+        m_regs[i.rd] = (i64)(i32)(i.imm << 12);
       }; break;
-      case 0b0011011: {
-        PARSE_I_INS(ins);
-        if (funct3 == 0b000) { // addiw
-          m_regs[rd] = (i32)m_regs[rs1] + (i32)imm;
-        } else if (funct3 == 0b001) { // slliw
-          u32 shamt = (ins >> 20) & 0b11111;
-          m_regs[rd] = (i32)m_regs[rs1] << shamt;
-        } else if (funct3 == 0b101) {
-          u32 shamt = (ins >> 20) & 0b11111;
-          u8 funct7 = (ins >> 25) & 0b1111111;
-          if (funct7 == 0b0000000) { // srliw
-            m_regs[rd] = (i32)((u32)m_regs[rs1] >> shamt);
-          } else if (funct7 == 0b0100000) { // sraiw
-            m_regs[rd] = (i32)m_regs[rs1] >> shamt;
-          } else {
-            std::println(stderr,
-                         "I-type 6: funct3=101: unrecognized funct7: {:b}",
-                         funct7);
-            exit(1);
-          }
-        } else {
-          std::println(stderr, "I-type 6: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
+      case Op::LW: {
+        m_regs[i.rd] = *(i32 *)&m_memory[m_regs[i.rs1] + i.imm];
       }; break;
-      case 0b0100011: {
-        PARSE_S_INS(ins);
-
-        if (funct3 == 0b000) { // sb
-          u64 addr = m_regs[rs1] + imm;
-          m_memory[addr] = m_regs[rs2];
-        } else if (funct3 == 0b001) { // sh
-          u64 addr = m_regs[rs1] + imm;
-          *(u16 *)(&m_memory[addr]) = m_regs[rs2];
-        } else if (funct3 == 0b010) { // sw
-          u64 addr = m_regs[rs1] + imm;
-          *(u32 *)(&m_memory[addr]) = m_regs[rs2];
-        } else if (funct3 == 0b011) { // sd
-          u64 addr = m_regs[rs1] + imm;
-          // take this rust
-          *(u64 *)(&m_memory[addr]) = m_regs[rs2];
-        } else {
-          std::println(stderr, "S-type: unrecognized funct3: {:03b}", funct3);
-          exit(1);
-        }
-      }; break;
-      case 0b0110111: { // lui
-        PARSE_U_INS(ins);
-        m_regs[rd] = (i64)(i32)(imm << 12);
-      }; break;
-      case 0b0010111: { // auipc
-        PARSE_U_INS(ins);
-        m_regs[rd] = m_pc + ((i64)imm << 12);
-      }; break;
-      default:
-        std::println(stderr, "Unrecognized opcode: {:07b}", opcode);
+      case Op::LWU: {
+        std::println(stderr, "LWU unimplemented");
         exit(1);
+      }; break;
+      case Op::MUL: {
+        m_regs[i.rd] = m_regs[i.rs1] * m_regs[i.rs2];
+      }; break;
+      case Op::MULH: {
+        i64 a_hi = m_regs[i.rs1] >> 32;
+        i64 b_hi = m_regs[i.rs2] >> 32;
+        u64 a_lo = (u32)m_regs[i.rs1];
+        u64 b_lo = (u32)m_regs[i.rs2];
+        u64 p0 = a_lo * b_lo;
+        i64 p1 = a_hi * b_lo;
+        i64 p2 = b_hi * a_lo;
+        i64 p3 = a_hi * b_hi;
+        i64 carry = (p0 >> 32);
+        i64 mid = p1 + p2 + carry;
+        m_regs[i.rd] = p3 + (mid >> 32);
+      }; break;
+      case Op::MULHU: {
+        u64 a = m_regs[i.rs1];
+        u64 b = m_regs[i.rs2];
+        u64 a_lo = a & 0xffffffff;
+        u64 a_hi = a >> 32;
+        u64 b_lo = b & 0xffffffff;
+        u64 b_hi = b >> 32;
+        u64 lo_lo = a_lo * b_lo;
+        u64 hi_lo = a_hi * b_lo;
+        u64 lo_hi = a_lo * b_hi;
+        u64 hi_hi = a_hi * b_hi;
+        u64 mid = (lo_lo >> 32) + (hi_lo & 0xffffffff) + (lo_hi & 0xffffffff);
+        m_regs[i.rd] = hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (mid >> 32);
+      }; break;
+      case Op::MULW: {
+        m_regs[i.rd] = (i32)(m_regs[i.rs1] * m_regs[i.rs2]);
+      }; break;
+      case Op::OR: {
+        m_regs[i.rd] = m_regs[i.rs1] | m_regs[i.rs2];
+      }; break;
+      case Op::ORI: {
+        std::println(stderr, "ORI unimplemented");
+        exit(1);
+      }; break;
+      case Op::REM: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = m_regs[i.rs1];
+        } else {
+          m_regs[i.rd] = m_regs[i.rs1] % m_regs[i.rs2];
+        }
+      }; break;
+      case Op::REMU: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = m_regs[i.rs1];
+        } else {
+          m_regs[i.rd] = (u64)m_regs[i.rs1] % (u64)m_regs[i.rs2];
+        }
+      }; break;
+      case Op::REMUW: {
+        if (m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = (i32)m_regs[i.rs1];
+        } else {
+          m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] % (u32)m_regs[i.rs2]);
+        }
+      }; break;
+      case Op::REMW: {
+        std::println(stderr, "REMW unimplemented");
+        exit(1);
+      }; break;
+      case Op::SB: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        m_memory[addr] = m_regs[i.rs2];
+      }; break;
+      case Op::SD: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
+      }; break;
+      case Op::SH: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        *(u16 *)(&m_memory[addr]) = m_regs[i.rs2];
+      }; break;
+      case Op::SLL: {
+        std::println(stderr, "SLL unimplemented");
+        exit(1);
+      }; break;
+      case Op::SLLI: {
+        m_regs[i.rd] = m_regs[i.rs1] << i.shamt;
+      }; break;
+      case Op::SLLIW: {
+        m_regs[i.rd] = (i32)m_regs[i.rs1] << i.shamt;
+      }; break;
+      case Op::SLLW: {
+        m_regs[i.rd] =
+            (i32)(u32)((u32)m_regs[i.rs1] << ((u32)m_regs[i.rs2] & 0b11111));
+      }; break;
+      case Op::SLT: {
+        m_regs[i.rd] = (m_regs[i.rs1] < m_regs[i.rs2]) ? 1 : 0;
+      }; break;
+      case Op::SLTI: {
+        std::println(stderr, "SLTI unimplemented");
+        exit(1);
+      }; break;
+      case Op::SLTIU: {
+        m_regs[i.rd] = ((u64)m_regs[i.rs1] < (u64)(i64)i.imm) ? 1 : 0;
+      }; break;
+      case Op::SLTU: {
+        m_regs[i.rd] = ((u64)m_regs[i.rs1] < (u64)m_regs[i.rs2]) ? 1 : 0;
+      }; break;
+      case Op::SRA: {
+        std::println(stderr, "SRA unimplemented");
+        exit(1);
+      }; break;
+      case Op::SRAI: {
+        m_regs[i.rd] = (i64)m_regs[i.rs1] >> i.shamt;
+      }; break;
+      case Op::SRAIW: {
+        m_regs[i.rd] = (i32)m_regs[i.rs1] >> i.shamt;
+      }; break;
+      case Op::SRAW: {
+        m_regs[i.rd] = ((i32)m_regs[i.rs1]) >> ((u32)m_regs[i.rs2] & 0b11111);
+      }; break;
+      case Op::SRL: {
+        std::println(stderr, "SRL unimplemented");
+        exit(1);
+      }; break;
+      case Op::SRLI: {
+        m_regs[i.rd] = (u64)m_regs[i.rs1] >> i.shamt;
+      }; break;
+      case Op::SRLIW: {
+        m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] >> i.shamt);
+      }; break;
+      case Op::SRLW: {
+        m_regs[i.rd] =
+            (i32)((u32)m_regs[i.rs1] >> ((u32)m_regs[i.rs2] & 0b11111));
+      }; break;
+      case Op::SUB: {
+        m_regs[i.rd] = m_regs[i.rs1] - m_regs[i.rs2];
+      }; break;
+      case Op::SUBW: {
+        m_regs[i.rd] = (i32)(m_regs[i.rs1] - m_regs[i.rs2]);
+      }; break;
+      case Op::SW: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        *(u32 *)(&m_memory[addr]) = m_regs[i.rs2];
+      }; break;
+      case Op::XOR: {
+        m_regs[i.rd] = m_regs[i.rs1] ^ m_regs[i.rs2];
+      }; break;
+      case Op::XORI: {
+        m_regs[i.rd] = m_regs[i.rs1] ^ i.imm;
+      }; break;
       }
 
       m_pc += 4;
