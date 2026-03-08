@@ -17,7 +17,7 @@ if command -v pkg-config >/dev/null; then
     LIBELF_FLAGS=$(pkg-config --cflags --libs libelf 2>/dev/null)
     if [ $? -eq 0 ]; then
         echo "building riscv64..."
-        c++ $COMMON -o riscv64 riscv64.cc $LIBELF_FLAGS
+        c++ -std=c++20 $COMMON -o riscv64 riscv64.cc $LIBELF_FLAGS
     else
         echo "libelf not found - skipping riscv64..."
     fi

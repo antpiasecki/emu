@@ -1,0 +1,4 @@
+If:
+  Language: c++
+CompileFlags:
+  Add: [-std=c++20]
