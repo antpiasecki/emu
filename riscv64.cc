@@ -13,6 +13,8 @@
 #include <iostream>
 #include <libelf.h>
 #include <print>
+#include <sys/mman.h>
+#include <sys/time.h>
 #include <vector>
 
 using i8 = int8_t;
@@ -29,7 +31,8 @@ static_assert(sizeof(size_t) == sizeof(u64), "u64 must be 64-bit");
 static_assert(std::endian::native == std::endian::little,
               "Big endianness not supported");
 
-static constexpr u64 MEMORY_SIZE = 20 * 1024 * 1024; // should be enough
+static constexpr u64 MEMORY_SIZE =
+    2ULL * 1024 * 1024 * 1024; // should be enough
 
 static constexpr std::array<const char *, 32> REGS = {
     "zero", "ra", "sp", "gp", "tp",  "t0",  "t1", "t2", "fp", "s1", "a0",
@@ -165,10 +168,22 @@ static constexpr std::array<OpDef, 63> OP_TABLE = {{
 class RISCV64 {
 public:
   RISCV64(const std::vector<char> &exe_bytes) {
+    m_memory = (u8 *)mmap(nullptr, MEMORY_SIZE, PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (m_memory == MAP_FAILED) {
+      std::println(stderr, "Failed to mmap memory");
+      exit(1);
+    }
+
     Elf *elf =
         elf_memory(const_cast<char *>(exe_bytes.data()), exe_bytes.size());
     GElf_Ehdr ehdr;
     gelf_getehdr(elf, &ehdr);
+
+    if (ehdr.e_machine != EM_RISCV) {
+      std::println(stderr, "ehdr.e_machine != EM_RISCV");
+      exit(1);
+    }
 
     m_code_section = get_code_section(elf, ehdr);
     m_pc = m_code_section.offset;
@@ -178,7 +193,7 @@ public:
       gelf_getphdr(elf, i, &phdr);
       if (phdr.p_type == PT_LOAD) {
         std::copy_n(exe_bytes.data() + phdr.p_offset, phdr.p_filesz,
-                    m_memory.data() + phdr.p_vaddr);
+                    m_memory + phdr.p_vaddr);
       }
     }
     elf_end(elf);
@@ -187,11 +202,12 @@ public:
     m_decoded.resize(num_ins);
     for (u64 i = 0; i < num_ins; i++) {
       u32 raw;
-      std::memcpy(&raw, m_memory.data() + m_code_section.offset + i * 4,
-                  sizeof(raw));
+      std::memcpy(&raw, m_memory + m_code_section.offset + i * 4, sizeof(raw));
       m_decoded[i] = decode_raw(raw);
     }
   }
+
+  ~RISCV64() { munmap(m_memory, MEMORY_SIZE); }
 
   void disassemble_all() {
     for (m_pc = m_code_section.offset;
@@ -250,10 +266,36 @@ public:
     std::println();
   }
 
+  void push_u64(u64 x) {
+    m_regs[2] -= 8;
+    *(u64 *)(m_memory + m_regs[2]) = x;
+  }
+
   void execute() {
     m_pc = m_code_section.entrypoint;
 
-    m_regs[2] = MEMORY_SIZE - 1024; // set the stack pointer
+    // set up the stack
+    i64 &sp = m_regs[2];
+    sp = MEMORY_SIZE - 1024;
+
+    // push "program"
+    const char *prog = "program";
+    u64 len = strlen(prog) + 1;
+    sp -= len;
+    std::memcpy(m_memory + sp, prog, len);
+    u64 prog_ptr = sp;
+    sp &= ~15;
+
+    // auxv = {0}
+    push_u64(0);
+    push_u64(0);
+    // envp = {0}
+    push_u64(0);
+    // argv = {prog_ptr, 0}
+    push_u64(0);
+    push_u64(prog_ptr);
+    // argc = 1
+    push_u64(1);
 
     while (m_pc < MEMORY_SIZE) {
       m_regs[0] = 0; // clear the zero register
@@ -339,10 +381,14 @@ public:
         }
       }; break;
       case Op::DIVW: {
-        if (m_regs[i.rs2] == 0) {
+        i32 a = m_regs[i.rs1];
+        i32 b = m_regs[i.rs2];
+        if (b == 0) {
           m_regs[i.rd] = (u64)(i64)(-1);
+        } else if (a == INT32_MIN && b == -1) {
+          m_regs[i.rd] = (i64)INT32_MIN;
         } else {
-          m_regs[i.rd] = (i64)(m_regs[i.rs1] / m_regs[i.rs2]);
+          m_regs[i.rd] = (i64)(a / b);
         }
       }; break;
       case Op::ECALL: {
@@ -388,21 +434,22 @@ public:
           return;
         }; break;
         case 169: { // gettimeofday
-                    // TODO: actually return the time
           i64 tv_addr = m_regs[10];
           i64 tz_addr = m_regs[11];
 
-          u8 tv_buf[16] = {
-              0xD2, 0x02, 0x96, 0x49,
-              0x00, 0x00, 0x00, 0x00, // tv_sec = 1234567890
-              0x00, 0x00, 0x00, 0x00,
-              0x00, 0x00, 0x00, 0x00, // tv_usec = 0
-          };
-          memcpy(&m_memory[tv_addr], tv_buf, 16);
+          struct timeval tv;
+          struct timezone tz;
 
-          memset(&m_memory[tz_addr], 0, 8);
-
-          m_regs[10] = 0;
+          i32 ret = gettimeofday(&tv, (tz_addr != 0) ? &tz : nullptr);
+          if (ret == 0) {
+            memcpy(&m_memory[tv_addr], &tv, sizeof(tv));
+            if (tz_addr != 0) {
+              memcpy(&m_memory[tz_addr], &tz, sizeof(tz));
+            }
+            m_regs[10] = 0;
+          } else {
+            m_regs[10] = -errno;
+          }
         }; break;
         default:
           std::println(stderr, "Unimplemented syscall: {}", m_regs[17]);
@@ -600,7 +647,7 @@ public:
   }
 
 private:
-  std::vector<u8> m_memory = std::vector<u8>(MEMORY_SIZE, 0);
+  u8 *m_memory;
   std::vector<Ins> m_decoded;
   u64 m_pc;
   std::array<i64, 32> m_regs{};
@@ -753,7 +800,7 @@ private:
       i.imm = ((i32)raw) >> 20;
 
       if (funct3 == 0b000) {
-        if (i.imm == 0) {
+        if (i.imm == 0b000000000000) {
           i.op = Op::ECALL;
         } else {
           std::println(stderr, "I-type 4: funct3=000 unrecognized imm: {:b}",
@@ -863,9 +910,9 @@ private:
           exit(1);
         }
       } else if (funct3 == 0b111) {
-        if (funct7 == 0b000) {
+        if (funct7 == 0b0000000) {
           i.op = Op::AND;
-        } else if (funct7 == 0b001) {
+        } else if (funct7 == 0b0000001) {
           i.op = Op::REMU;
         } else {
           std::println(stderr,
