@@ -15,55 +15,6 @@
 #include <print>
 #include <vector>
 
-// TODO: dont use macros now that we're in an actual language
-#define PARSE_I_INS(ins)                                                       \
-  u8 rd = (ins >> 7) & 0b11111;                                                \
-  u8 funct3 = (ins >> 12) & 0b111;                                             \
-  u8 rs1 = (ins >> 15) & 0b11111;                                              \
-  i32 imm = ((i32)ins) >> 20
-
-#define PARSE_R_INS(ins)                                                       \
-  u8 rd = (ins >> 7) & 0b11111;                                                \
-  u8 funct3 = (ins >> 12) & 0b111;                                             \
-  u8 rs1 = (ins >> 15) & 0b11111;                                              \
-  u8 rs2 = (ins >> 20) & 0b11111;                                              \
-  u8 funct7 = (u8)((ins >> 25) & 0b1111111)
-
-#define PARSE_B_INS(ins)                                                       \
-  u8 funct3 = (ins >> 12) & 0b111;                                             \
-  u8 rs1 = (ins >> 15) & 0b11111;                                              \
-  u8 rs2 = (ins >> 20) & 0b11111;                                              \
-  i32 imm_12 = (ins >> 31) & 0b1;                                              \
-  i32 imm_10_5 = (ins >> 25) & 0b111111;                                       \
-  i32 imm_4_1 = (ins >> 8) & 0b1111;                                           \
-  i32 imm_11 = (ins >> 7) & 0b1;                                               \
-  i32 imm =                                                                    \
-      (imm_12 << 12) | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1);      \
-  imm = (imm << 19) >> 19
-
-#define PARSE_S_INS(ins)                                                       \
-  u8 funct3 = (ins >> 12) & 0b111;                                             \
-  u8 rs1 = (ins >> 15) & 0b11111;                                              \
-  u8 rs2 = (ins >> 20) & 0b11111;                                              \
-  i32 imm_11_5 = (ins >> 25) & 0b1111111;                                      \
-  i32 imm_4_0 = (ins >> 7) & 0b11111;                                          \
-  i32 imm = (imm_11_5 << 5) | imm_4_0;                                         \
-  imm = (imm << 20) >> 20
-
-#define PARSE_J_INS(ins)                                                       \
-  u8 rd = (ins >> 7) & 0b11111;                                                \
-  i32 imm_20 = (ins >> 31) & 0b1;                                              \
-  i32 imm_10_1 = (ins >> 21) & 0b1111111111;                                   \
-  i32 imm_11 = (ins >> 20) & 0b1;                                              \
-  i32 imm_19_12 = (ins >> 12) & 0b11111111;                                    \
-  i32 imm =                                                                    \
-      (imm_20 << 20) | (imm_19_12 << 12) | (imm_11 << 11) | (imm_10_1 << 1);   \
-  imm = (imm << 11) >> 11
-
-#define PARSE_U_INS(ins)                                                       \
-  u8 rd = (ins >> 7) & 0b11111;                                                \
-  i32 imm = ins >> 12
-
 using i8 = int8_t;
 using i16 = int16_t;
 using i32 = int32_t;
@@ -72,7 +23,9 @@ using u8 = uint8_t;
 using u16 = uint16_t;
 using u32 = uint32_t;
 using u64 = uint64_t;
+
 static_assert(sizeof(size_t) == sizeof(u64), "u64 must be 64-bit");
+
 static_assert(std::endian::native == std::endian::little,
               "Big endianness not supported");
 
@@ -230,6 +183,15 @@ public:
       }
     }
     elf_end(elf);
+
+    u64 num_ins = m_code_section.size / 4;
+    m_decoded.resize(num_ins);
+    for (u64 i = 0; i < num_ins; i++) {
+      u32 raw;
+      std::memcpy(&raw, m_memory.data() + m_code_section.offset + i * 4,
+                  sizeof(raw));
+      m_decoded[i] = decode_raw(raw);
+    }
   }
 
   void disassemble_all() {
@@ -240,7 +202,7 @@ public:
   }
 
   void disassemble_one() {
-    Ins ins = fetch_ins();
+    Ins ins = m_decoded[(m_pc - m_code_section.offset) / 4];
 
     const OpDef &def = OP_TABLE[ins.op];
 
@@ -297,7 +259,7 @@ public:
     while (m_pc < m_code_section.offset + m_code_section.size) {
       m_regs[0] = 0; // clear the zero register
 
-      Ins i = fetch_ins();
+      Ins i = m_decoded[(m_pc - m_code_section.offset) / 4];
 
       switch (i.op) {
       case Op::INVALID: {
@@ -641,6 +603,7 @@ public:
 
 private:
   std::vector<u8> m_memory = std::vector<u8>(MEMORY_SIZE, 0);
+  std::vector<Ins> m_decoded;
   u64 m_pc;
   std::array<i64, 32> m_regs{};
   Section m_code_section;
@@ -670,13 +633,11 @@ private:
     exit(1);
   }
 
-  Ins fetch_ins() {
-    u32 raw;
-    std::memcpy(&raw, m_memory.data() + m_pc, sizeof(raw));
-
+  Ins decode_raw(u32 raw) {
     u8 opcode = raw & 0b1111111;
 
     Ins i;
+    i.op = Op::INVALID;
 
     switch (opcode) {
     case 0b1100011: {
