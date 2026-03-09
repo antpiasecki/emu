@@ -46,6 +46,7 @@ enum Op {
   ADDI,
   ADDIW,
   ADDW,
+  AMOSWAP_D,
   AND,
   ANDI,
   AUIPC,
@@ -60,21 +61,32 @@ enum Op {
   C_ADDIW,
   C_ADDI16SP,
   C_ADDI4SPN,
+  C_ADDW,
+  C_AND,
+  C_ANDI,
   C_BEQZ,
   C_BNEZ,
   C_EBREAK,
   C_FLDSP,
+  C_J,
   C_JALR,
+  C_JR,
   C_LD,
   C_LDSP,
   C_LI,
   C_LUI,
   C_LW,
   C_MV,
+  C_OR,
   C_SD,
   C_SDSP,
+  C_SRAI,
+  C_SRLI,
   C_SLLI,
+  C_SUB,
+  C_SUBW,
   C_SW,
+  C_XOR,
   DIV,
   DIVU,
   DIVUW,
@@ -161,8 +173,10 @@ enum class Format {
   U,
   J,
   CI,
+  CJ,
   CSS,
   CR,
+  CR1,
   CL,
   R_ATOMIC,
   R_ATOMIC_LR
@@ -173,12 +187,13 @@ struct OpDef {
   Format format;
 };
 
-static constexpr std::array<OpDef, 88> OP_TABLE = {{
+static constexpr std::array<OpDef, 100> OP_TABLE = {{
     {"???", Format::NONE},
     {"add", Format::R},
     {"addi", Format::I},
     {"addiw", Format::I},
     {"addw", Format::R},
+    {"amoswap.d", Format::R_ATOMIC},
     {"and", Format::R},
     {"andi", Format::I},
     {"auipc", Format::U},
@@ -193,21 +208,32 @@ static constexpr std::array<OpDef, 88> OP_TABLE = {{
     {"c.addiw", Format::CI},
     {"c.addi16sp", Format::CI},
     {"c.addi4spn", Format::CI},
+    {"c.addw", Format::CI},
+    {"c.and", Format::CR},
+    {"c.andi", Format::CI},
     {"c.beqz", Format::B},
     {"c.bnez", Format::B},
     {"c.ebreak", Format::CR},
     {"c.fldsp", Format::CSS},
-    {"c.jalr", Format::CR},
+    {"c.j", Format::CJ},
+    {"c.jalr", Format::CR1},
+    {"c.jr", Format::CR1},
     {"c.ld", Format::CL},
     {"c.ldsp", Format::CL},
     {"c.li", Format::CI},
     {"c.lui", Format::CI},
     {"c.lw", Format::CL},
     {"c.mv", Format::CR},
+    {"c.or", Format::CR},
     {"c.sd", Format::S},
     {"c.sdsp", Format::CSS},
     {"c.slli", Format::CI},
+    {"c.srai", Format::CI},
+    {"c.srli", Format::CI},
+    {"c.sub", Format::CR},
+    {"c.subw", Format::CR},
     {"c.sw", Format::S},
+    {"c.xor", Format::CR},
     {"div", Format::R},
     {"divu", Format::R},
     {"divuw", Format::R},
@@ -308,6 +334,7 @@ public:
       Ins ins = decode_raw(raw);
       ins.length = ((raw & 0b11) == 0b11) ? 4 : 2;
       m_decoded[offset / 2] = ins;
+      disassemble_ins(ins);
 
       offset += ins.length;
     }
@@ -318,13 +345,13 @@ public:
   void disassemble_all() {
     m_pc = m_code_section.offset;
     while (m_pc < m_code_section.offset + m_code_section.size) {
-      disassemble_one();
+      Ins ins = m_decoded[(m_pc - m_code_section.offset) / 2];
+      disassemble_ins(ins);
+      m_pc += ins.length;
     }
   }
 
-  void disassemble_one() {
-    Ins ins = m_decoded[(m_pc - m_code_section.offset) / 2];
-
+  void disassemble_ins(Ins ins) {
     const OpDef &def = OP_TABLE[ins.op];
 
     switch (def.format) {
@@ -361,11 +388,17 @@ public:
     case Format::CI:
       std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
       break;
+    case Format::CJ:
+      std::println("{} {}", def.mnemonic, ins.imm);
+      break;
     case Format::CSS:
       std::println("{} {}, {}(sp)", def.mnemonic, REGS[ins.rs2], ins.imm);
       break;
     case Format::CR:
       std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs2]);
+      break;
+    case Format::CR1:
+      std::println("{} {}", def.mnemonic, REGS[ins.rs1]);
       break;
     case Format::CL:
       std::println("{} {}, {}({})", def.mnemonic, REGS[ins.rd], ins.imm,
@@ -382,8 +415,6 @@ public:
       std::println("{}", def.mnemonic);
       break;
     }
-
-    m_pc += ins.length;
   }
 
   void dump() {
@@ -908,6 +939,85 @@ private:
         }
 
       }; break;
+      case 0b100: {
+        u8 funct2 = (raw >> 10) & 0b11;
+
+        if (funct2 == 0b11) {
+
+          bool bit12 = (raw >> 12) & 0b1;
+          i.rs2 = ((raw >> 2) & 0b111) + 8;
+          u8 sub_op = (raw >> 5) & 0b11;
+
+          if (bit12 == 0) {
+            switch (sub_op) {
+            case 0b00:
+              i.op = Op::C_SUB;
+              break;
+            case 0b01:
+              i.op = Op::C_XOR;
+              break;
+            case 0b10:
+              i.op = Op::C_OR;
+              break;
+            case 0b11:
+              i.op = Op::C_AND;
+              break;
+            default:
+              std::println(
+                  stderr,
+                  "C: opcode=01: funct3=100: bit12=0: unrecognized sub_op");
+              exit(1);
+            }
+          } else {
+            switch (sub_op) {
+            case 0b00:
+              i.op = Op::C_SUBW;
+              break;
+            case 0b01:
+              i.op = Op::C_ADDW;
+              break;
+            default:
+              std::println(stderr,
+                           "C: opcode=01: funct3=100: bit12=1: unrecognized "
+                           "sub_op: {:b}",
+                           sub_op);
+              exit(1);
+            }
+          }
+        } else {
+          i.rd = ((raw >> 7) & 0b111) + 8;
+          i.rs1 = i.rd;
+          i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
+
+          switch (funct2) {
+          case 0b00:
+            i.op = Op::C_SRLI;
+            break;
+          case 0b01:
+            i.op = Op::C_SRAI;
+            break;
+          case 0b10:
+            i.imm = (i.imm << 26) >> 26;
+            i.op = Op::C_ANDI;
+            break;
+          default:
+            std::println(
+                stderr,
+                "C: opcode=01: funct3=100: funct2!=11: unrecognized funct2");
+            exit(1);
+          }
+        }
+      }; break;
+      case 0b101: {
+        i.rd = 0;
+        i.imm = (((raw >> 12) & 0b1) << 11) | (((raw >> 11) & 0b1) << 4) |
+                (((raw >> 9) & 0b11) << 8) | (((raw >> 8) & 0b1) << 10) |
+                (((raw >> 7) & 0b1) << 6) | (((raw >> 6) & 0b1) << 7) |
+                (((raw >> 5) & 0b1) << 3) | (((raw >> 3) & 0b11) << 1) |
+                (((raw >> 2) & 0b1) << 5);
+        i.imm = (i.imm << 20) >> 20;
+        i.op = Op::C_J;
+      }; break;
       case 0b110: {
         i.rs1 = ((raw >> 7) & 0b111) + 8;
         i.rs2 = 0;
@@ -947,7 +1057,6 @@ private:
       }; break;
       case 0b011: {
         i.rs1 = 2;
-        i.rd = (raw >> 7) & 0b11111;
         i.imm = (((raw >> 12) & 0b1) << 5) | (((raw >> 5) & 0b11) << 3) |
                 (((raw >> 2) & 0b111) << 6);
         i.op = Op::C_LDSP;
@@ -958,10 +1067,10 @@ private:
 
         if (bit12 == 0) {
           if (i.rs2 == 0) {
-            std::println(
-                stderr,
-                "C: opcode=10: funct3=100: bit12=0: rs2=0: unimplemented");
-            exit(1);
+            i.rs1 = i.rd;
+            i.rd = 0;
+            i.imm = 0;
+            i.op = Op::C_JR;
           } else {
             i.rs1 = 0;
             i.op = Op::C_MV;
@@ -1260,6 +1369,9 @@ private:
 
       if (funct3 == 0b011) {
         switch (funct7) {
+        case 0b00001: {
+          i.op = Op::AMOSWAP_D;
+        }; break;
         case 0b00010: {
           i.op = Op::LR_D;
         }; break;
