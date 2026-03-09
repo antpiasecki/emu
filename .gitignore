@@ -3,3 +3,5 @@
 /chip8
 /mos6502
 /riscv64
+/riscv64-linux-musl-cross
+/dump
