@@ -80,9 +80,9 @@ enum Op {
   C_OR,
   C_SD,
   C_SDSP,
+  C_SLLI,
   C_SRAI,
   C_SRLI,
-  C_SLLI,
   C_SUB,
   C_SUBW,
   C_SW,
@@ -171,6 +171,7 @@ enum class Format {
   I_SHIFT,
   S,
   B,
+  CB,
   U,
   J,
   CI,
@@ -199,9 +200,9 @@ static constexpr std::array<OpDef, 101> OP_TABLE = {{
     {"bne", Format::B},         {"c.add", Format::CR},
     {"c.addi", Format::CI},     {"c.addiw", Format::CI},
     {"c.addi16sp", Format::CI}, {"c.addi4spn", Format::CI},
-    {"c.addw", Format::CI},     {"c.and", Format::CR},
-    {"c.andi", Format::CI},     {"c.beqz", Format::B},
-    {"c.bnez", Format::B},      {"c.ebreak", Format::CR},
+    {"c.addw", Format::CR},     {"c.and", Format::CR},
+    {"c.andi", Format::CI},     {"c.beqz", Format::CB},
+    {"c.bnez", Format::CB},     {"c.ebreak", Format::NONE},
     {"c.fldsp", Format::CSS},   {"c.j", Format::CJ},
     {"c.jalr", Format::CR1},    {"c.jr", Format::CR1},
     {"c.ld", Format::CL},       {"c.ldsp", Format::CL},
@@ -334,6 +335,9 @@ public:
       std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rs1], REGS[ins.rs2],
                    ins.imm);
       break;
+    case Format::CB:
+      std::println("{} {}, {}", def.mnemonic, REGS[ins.rs1], ins.imm);
+      break;
     case Format::J:
       std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
       break;
@@ -452,8 +456,10 @@ public:
         }
       }; break;
       case Op::BGEU: {
-        std::println(stderr, "BGEU unimplemented");
-        exit(1);
+        if ((u64)m_regs[i.rs1] >= (u64)m_regs[i.rs2]) {
+          m_pc += i.imm;
+          continue;
+        }
       }; break;
       case Op::BLT: {
         if (m_regs[i.rs1] < m_regs[i.rs2]) {
@@ -473,16 +479,98 @@ public:
           continue;
         }
       }; break;
+      case Op::C_ADD: {
+        m_regs[i.rd] += m_regs[i.rs2];
+      }; break;
+      case Op::C_ADDI: {
+        m_regs[i.rd] += i.imm;
+      }; break;
+      case Op::C_ADDIW: {
+        m_regs[i.rd] = (i64)(i32)m_regs[i.rd] + i.imm;
+      }; break;
+      case Op::C_ADDI16SP: {
+        sp += i.imm;
+      }; break;
+      case Op::C_ADDI4SPN: {
+        m_regs[i.rd] = sp + i.imm;
+      }; break;
+      case Op::C_ADDW: {
+        m_regs[i.rd] = (i64)((i32)m_regs[i.rd] + (i32)m_regs[i.rs2]);
+      }; break;
+      case Op::C_AND: {
+        m_regs[i.rd] &= m_regs[i.rs2];
+      }; break;
+      case Op::C_ANDI: {
+        m_regs[i.rd] = m_regs[i.rs1] & i.imm;
+      }; break;
+      case Op::C_BEQZ: {
+        if (m_regs[i.rs1] == 0) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::C_BNEZ: {
+        if (m_regs[i.rs1] != 0) {
+          m_pc += i.imm;
+          continue;
+        }
+      }; break;
+      case Op::C_J: {
+        m_pc += i.imm;
+        continue;
+      }; break;
+      case Op::C_JALR: {
+        m_regs[1] = m_pc + 2;
+        m_pc = m_regs[i.rs1];
+        continue;
+      }; break;
+      case Op::C_JR: {
+        m_pc = m_regs[i.rs1];
+        continue;
+      }; break;
+      case Op::C_LD: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        m_regs[i.rd] = *(u64 *)&m_memory[addr];
+      }; break;
+      case Op::C_LDSP: {
+        u64 addr = sp + i.imm;
+        m_regs[i.rd] = *(u64 *)(&m_memory[addr]);
+      }; break;
+      case Op::C_LI: {
+        m_regs[i.rd] = i.imm;
+      }; break;
+      case Op::C_LUI: {
+        m_regs[i.rd] = (int64_t)(uint64_t)((int64_t)i.imm) << 12;
+      }; break;
+      case Op::C_LW: {
+        u64 addr = m_regs[i.rs1] + i.imm;
+        m_regs[i.rd] = *(u32 *)&m_memory[addr];
+      }; break;
+      case Op::C_MV: {
+        m_regs[i.rd] = m_regs[i.rs2];
+      }; break;
+      case Op::C_SDSP: {
+        u64 addr = sp + i.imm;
+        *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
+      }; break;
+      case Op::C_SLLI: {
+        m_regs[i.rd] = (i64)((u64)m_regs[i.rd] << i.imm);
+      }; break;
+      case Op::C_SRAI: {
+        m_regs[i.rd] >>= i.imm;
+      }; break;
+      case Op::C_SRLI: {
+        m_regs[i.rd] = (i64)((u64)m_regs[i.rd] >> i.imm);
+      }; break;
+      case Op::C_SUB: {
+        m_regs[i.rd] -= m_regs[i.rs2];
+      }; break;
       case Op::DIV: {
         if (m_regs[i.rs2] == 0) {
           m_regs[i.rd] = -1;
         } else {
           m_regs[i.rd] = m_regs[i.rs1] / m_regs[i.rs2];
         }
-      }; break;
-      case Op::DIVU: {
-        std::println(stderr, "DIVU unimplemented");
-        exit(1);
       }; break;
       case Op::DIVUW: {
         if (m_regs[i.rs2] == 0) {
@@ -540,9 +628,16 @@ public:
             std::cout.put(m_memory[i]);
           }
         }; break;
-        case 93: { // exit
+        case 93:   // exit
+        case 94: { // exit_group
           std::println("Program exited with code {}.", m_regs[10]);
           return;
+        }; break;
+        case 96: { // set_tid_address
+          i64 tidptr = m_regs[10];
+          i32 tid = 123;
+          memcpy(&m_memory[tidptr], &tid, sizeof(tid));
+          m_regs[10] = tid;
         }; break;
         case 169: { // gettimeofday
           i64 tv_addr = m_regs[10];
@@ -590,19 +685,11 @@ public:
       case Op::LH: {
         m_regs[i.rd] = *(i16 *)&m_memory[m_regs[i.rs1] + i.imm];
       }; break;
-      case Op::LHU: {
-        std::println(stderr, "LHU unimplemented");
-        exit(1);
-      }; break;
       case Op::LUI: {
         m_regs[i.rd] = (i64)(i32)(i.imm << 12);
       }; break;
       case Op::LW: {
         m_regs[i.rd] = *(i32 *)&m_memory[m_regs[i.rs1] + i.imm];
-      }; break;
-      case Op::LWU: {
-        std::println(stderr, "LWU unimplemented");
-        exit(1);
       }; break;
       case Op::MUL: {
         m_regs[i.rd] = m_regs[i.rs1] * m_regs[i.rs2];
@@ -640,10 +727,6 @@ public:
       case Op::OR: {
         m_regs[i.rd] = m_regs[i.rs1] | m_regs[i.rs2];
       }; break;
-      case Op::ORI: {
-        std::println(stderr, "ORI unimplemented");
-        exit(1);
-      }; break;
       case Op::REM: {
         if (m_regs[i.rs2] == 0) {
           m_regs[i.rd] = m_regs[i.rs1];
@@ -665,25 +748,18 @@ public:
           m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] % (u32)m_regs[i.rs2]);
         }
       }; break;
-      case Op::REMW: {
-        std::println(stderr, "REMW unimplemented");
-        exit(1);
-      }; break;
       case Op::SB: {
         u64 addr = m_regs[i.rs1] + i.imm;
         m_memory[addr] = m_regs[i.rs2];
       }; break;
-      case Op::SD: {
+      case Op::SD:
+      case Op::C_SD: {
         u64 addr = m_regs[i.rs1] + i.imm;
         *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
       }; break;
       case Op::SH: {
         u64 addr = m_regs[i.rs1] + i.imm;
         *(u16 *)(&m_memory[addr]) = m_regs[i.rs2];
-      }; break;
-      case Op::SLL: {
-        std::println(stderr, "SLL unimplemented");
-        exit(1);
       }; break;
       case Op::SLLI: {
         m_regs[i.rd] = m_regs[i.rs1] << i.shamt;
@@ -698,19 +774,11 @@ public:
       case Op::SLT: {
         m_regs[i.rd] = (m_regs[i.rs1] < m_regs[i.rs2]) ? 1 : 0;
       }; break;
-      case Op::SLTI: {
-        std::println(stderr, "SLTI unimplemented");
-        exit(1);
-      }; break;
       case Op::SLTIU: {
         m_regs[i.rd] = ((u64)m_regs[i.rs1] < (u64)(i64)i.imm) ? 1 : 0;
       }; break;
       case Op::SLTU: {
         m_regs[i.rd] = ((u64)m_regs[i.rs1] < (u64)m_regs[i.rs2]) ? 1 : 0;
-      }; break;
-      case Op::SRA: {
-        std::println(stderr, "SRA unimplemented");
-        exit(1);
       }; break;
       case Op::SRAI: {
         m_regs[i.rd] = (i64)m_regs[i.rs1] >> i.shamt;
@@ -720,10 +788,6 @@ public:
       }; break;
       case Op::SRAW: {
         m_regs[i.rd] = ((i32)m_regs[i.rs1]) >> ((u32)m_regs[i.rs2] & 0b11111);
-      }; break;
-      case Op::SRL: {
-        std::println(stderr, "SRL unimplemented");
-        exit(1);
       }; break;
       case Op::SRLI: {
         m_regs[i.rd] = (u64)m_regs[i.rs1] >> i.shamt;
@@ -741,6 +805,7 @@ public:
       case Op::SUBW: {
         m_regs[i.rd] = (i32)(m_regs[i.rs1] - m_regs[i.rs2]);
       }; break;
+      case Op::C_SW:
       case Op::SW: {
         u64 addr = m_regs[i.rs1] + i.imm;
         *(u32 *)(&m_memory[addr]) = m_regs[i.rs2];
@@ -752,7 +817,7 @@ public:
         m_regs[i.rd] = m_regs[i.rs1] ^ i.imm;
       }; break;
       default: {
-        std::println(stderr, "Unrecognized Op: {}", (u64)i.op);
+        std::println(stderr, "{} not implemented", OP_TABLE[i.op].mnemonic);
         exit(1);
       }; break;
       }
@@ -885,16 +950,17 @@ private:
           i.imm = (i.imm << 22) >> 22;
           i.op = Op::C_ADDI16SP;
         } else {
-          i.imm = (((raw >> 12) & 0b1) << 17) | (((raw >> 2) & 0b11111) << 12);
-          i.imm = (i.imm << 14) >> 14;
+          i.imm = (((raw >> 12) & 0b1) << 5) | ((raw >> 2) & 0b11111);
+          i.imm = (i.imm << 26) >> 26;
           i.op = Op::C_LUI;
         }
-
       }; break;
       case 0b100: {
         u8 funct2 = (raw >> 10) & 0b11;
 
         if (funct2 == 0b11) {
+          i.rs1 = ((raw >> 7) & 0b111) + 8;
+          i.rd = i.rs1;
 
           bool bit12 = (raw >> 12) & 0b1;
           i.rs2 = ((raw >> 2) & 0b111) + 8;
@@ -1522,7 +1588,6 @@ int main(int argc, char *argv[]) {
   exe_bytes.clear();
   exe_bytes.shrink_to_fit();
 
-  r.disassemble_all();
   std::println("END DISASSEMBLY");
 
   r.execute();
