@@ -55,6 +55,14 @@ enum Op {
   BLT,
   BLTU,
   BNE,
+  C_ADDI,
+  C_ADDI16SP,
+  C_ADDI4SPN,
+  C_LI,
+  C_LUI,
+  C_MV,
+  C_SDSP,
+  C_SLLI,
   DIV,
   DIVU,
   DIVUW,
@@ -103,7 +111,7 @@ enum Op {
   SUBW,
   SW,
   XOR,
-  XORI
+  XORI,
 };
 
 struct Ins {
@@ -123,14 +131,14 @@ struct Section {
   u64 entrypoint;
 };
 
-enum class Format { NONE, R, I, I_LOAD, I_SHIFT, S, B, U, J };
+enum class Format { NONE, R, I, I_LOAD, I_SHIFT, S, B, U, J, CI, CSS, CR };
 
 struct OpDef {
   const char *mnemonic;
   Format format;
 };
 
-static constexpr std::array<OpDef, 63> OP_TABLE = {{
+static constexpr std::array<OpDef, 71> OP_TABLE = {{
     {"???", Format::NONE},      {"add", Format::R},
     {"addi", Format::I},        {"addiw", Format::I},
     {"addw", Format::R},        {"and", Format::R},
@@ -138,6 +146,10 @@ static constexpr std::array<OpDef, 63> OP_TABLE = {{
     {"beq", Format::B},         {"bge", Format::B},
     {"bgeu", Format::B},        {"blt", Format::B},
     {"bltu", Format::B},        {"bne", Format::B},
+    {"c.addi", Format::CI},     {"c.addi16sp", Format::CI},
+    {"c.addi4spn", Format::CI}, {"c.li", Format::CI},
+    {"c.lui", Format::CI},      {"c.mv", Format::CR},
+    {"c.sdsp", Format::CSS},    {"c.slli", Format::CI},
     {"div", Format::R},         {"divu", Format::R},
     {"divuw", Format::R},       {"divw", Format::R},
     {"ecall", Format::NONE},    {"jal", Format::J},
@@ -251,6 +263,15 @@ public:
       break;
     case Format::J:
       std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
+      break;
+    case Format::CI:
+      std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], ins.imm);
+      break;
+    case Format::CSS:
+      std::println("{} {}, {}(sp)", def.mnemonic, REGS[ins.rs2], ins.imm);
+      break;
+    case Format::CR:
+      std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs2]);
       break;
     case Format::NONE:
       std::println("{}", def.mnemonic);
@@ -640,6 +661,10 @@ public:
       case Op::XORI: {
         m_regs[i.rd] = m_regs[i.rs1] ^ i.imm;
       }; break;
+      default: {
+        std::println(stderr, "Unrecognized Op: {}", (u64)i.op);
+        exit(1);
+      }; break;
       }
 
       m_pc += 4;
@@ -679,6 +704,131 @@ private:
   }
 
   Ins decode_raw(u32 raw) {
+    if ((raw & 0b11) != 0b11) {
+      return decode_raw_16bit((u16)raw);
+    } else {
+      return decode_raw_32bit(raw);
+    }
+  }
+
+  // https://docs.riscv.org/reference/isa/unpriv/c-st-ext.html#27-8-rvc-instruction-set-listings
+  Ins decode_raw_16bit(u16 raw) {
+    u8 opcode = raw & 0b11;
+    u32 funct3 = (raw >> 13) & 0b111;
+
+    Ins i;
+    i.op = Op::INVALID;
+
+    i.rd = (raw >> 7) & 0b11111;
+
+    switch (opcode) {
+    case 0b00: {
+      switch (funct3) {
+      case 0b000: {
+        if (raw == 0) {
+          std::println(stderr, "C: illegal instruction (all zeros)");
+          exit(1);
+        }
+
+        i.rd = ((raw >> 2) & 0b111) + 8;
+        i.rs1 = 2;
+        i.imm = (((raw >> 11) & 0b11) << 4) | (((raw >> 7) & 0b1111) << 6) |
+                (((raw >> 6) & 0b1) << 2) | (((raw >> 5) & 0b1) << 3);
+        i.op = Op::C_ADDI4SPN;
+      }; break;
+      default: {
+        std::println(stderr, "C: opcode=00: unrecognized funct3: {:03b}",
+                     funct3);
+        exit(1);
+      }; break;
+      }
+    }; break;
+    case 0b01: {
+      switch (funct3) {
+      case 0b000: {
+        i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
+        i.imm = (i.imm << 26) >> 26;
+        i.op = Op::C_ADDI;
+      }; break;
+      case 0b010: {
+        i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
+        i.imm = (i.imm << 26) >> 26;
+        i.op = Op::C_LI;
+      }; break;
+      case 0b011: {
+        if (i.rd == 2) {
+          i.imm = (((raw >> 12) & 0b1) << 9) | (((raw >> 3) & 0b11) << 7) |
+                  (((raw >> 5) & 0b1) << 6) | (((raw >> 2) & 0b1) << 5) |
+                  (((raw >> 6) & 0b1) << 4);
+          i.imm = (i.imm << 22) >> 22;
+          i.op = Op::C_ADDI16SP;
+        } else {
+          i.imm = (((raw >> 12) & 0b1) << 17) | (((raw >> 2) & 0b11111) << 12);
+          i.imm = (i.imm << 14) >> 14;
+          i.op = Op::C_LUI;
+        }
+
+      }; break;
+      default: {
+        std::println(stderr, "C: opcode=01: unrecognized funct3: {:03b}",
+                     funct3);
+        exit(1);
+      }; break;
+      }
+    }; break;
+    case 0b10: {
+      switch (funct3) {
+      case 0b000: {
+        i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
+        i.op = Op::C_SLLI;
+      }; break;
+      case 0b010: {
+        std::println(stderr, "F extension not implemented yet.");
+        exit(1);
+      }; break;
+      case 0b100: {
+        bool bit12 = (raw >> 12) & 0b1;
+        i.rs2 = (raw >> 2) & 0b11111;
+
+        if (bit12 == 0) {
+          if (i.rs2 == 0) {
+            std::println(
+                stderr,
+                "C: opcode=10: funct3=100: bit12=0: rs2=0: unimplemented");
+            exit(1);
+          } else {
+            i.rs1 = 0;
+            i.op = Op::C_MV;
+          }
+        } else {
+          std::println(stderr,
+                       "C: opcode=10: funct3=100: bit12=1: unimplemented");
+          exit(1);
+        }
+      }; break;
+      case 0b111: {
+        i.rs2 = (raw >> 2) & 0b11111;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 7) & 0b111) << 6);
+        i.op = Op::C_SDSP;
+      }; break;
+      default: {
+        std::println(stderr, "C: opcode=10: unrecognized funct3: {:03b}",
+                     funct3);
+        exit(1);
+      }; break;
+      }
+    }; break;
+    default: {
+      std::println(stderr, "C: unrecognized opcode: {:02b}", opcode);
+      exit(1);
+    }; break;
+    }
+
+    return i;
+  }
+
+  // https://docs.riscv.org/reference/isa/unpriv/rv-32-64g.html
+  Ins decode_raw_32bit(u32 raw) {
     u8 opcode = raw & 0b1111111;
 
     Ins i;
