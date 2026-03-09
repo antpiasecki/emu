@@ -103,6 +103,7 @@ enum Op {
   LH,
   LHU,
   LR_D,
+  LR_W,
   LUI,
   LW,
   LWU,
@@ -119,6 +120,7 @@ enum Op {
   REMW,
   SB,
   SC_D,
+  SC_W,
   SD,
   SH,
   SLL,
@@ -189,57 +191,109 @@ struct OpDef {
   Format format;
 };
 
-static constexpr std::array<OpDef, 101> OP_TABLE = {{
-    {"???", Format::NONE},      {"add", Format::R},
-    {"addi", Format::I},        {"addiw", Format::I},
-    {"addw", Format::R},        {"amoswap.d", Format::R_ATOMIC},
-    {"and", Format::R},         {"andi", Format::I},
-    {"auipc", Format::U},       {"beq", Format::B},
-    {"bge", Format::B},         {"bgeu", Format::B},
-    {"blt", Format::B},         {"bltu", Format::B},
-    {"bne", Format::B},         {"c.add", Format::CR},
-    {"c.addi", Format::CI},     {"c.addiw", Format::CI},
-    {"c.addi16sp", Format::CI}, {"c.addi4spn", Format::CI},
-    {"c.addw", Format::CR},     {"c.and", Format::CR},
-    {"c.andi", Format::CI},     {"c.beqz", Format::CB},
-    {"c.bnez", Format::CB},     {"c.ebreak", Format::NONE},
-    {"c.fldsp", Format::CSS},   {"c.j", Format::CJ},
-    {"c.jalr", Format::CR1},    {"c.jr", Format::CR1},
-    {"c.ld", Format::CL},       {"c.ldsp", Format::CL},
-    {"c.li", Format::CI},       {"c.lui", Format::CI},
-    {"c.lw", Format::CL},       {"c.mv", Format::CR},
-    {"c.or", Format::CR},       {"c.sd", Format::S},
-    {"c.sdsp", Format::CSS},    {"c.slli", Format::CI},
-    {"c.srai", Format::CI},     {"c.srli", Format::CI},
-    {"c.sub", Format::CR},      {"c.subw", Format::CR},
-    {"c.sw", Format::S},        {"c.swsp", Format::CSS},
-    {"c.xor", Format::CR},      {"div", Format::R},
-    {"divu", Format::R},        {"divuw", Format::R},
-    {"divw", Format::R},        {"ecall", Format::NONE},
-    {"fence", Format::NONE},    {"fence.tso", Format::NONE},
-    {"jal", Format::J},         {"jalr", Format::I},
-    {"lb", Format::I_LOAD},     {"lbu", Format::I_LOAD},
-    {"ld", Format::I_LOAD},     {"lh", Format::I_LOAD},
-    {"lhu", Format::I_LOAD},    {"lr.d", Format::R_ATOMIC_LR},
-    {"lui", Format::U},         {"lw", Format::I_LOAD},
-    {"lwu", Format::I_LOAD},    {"mul", Format::R},
-    {"mulh", Format::R},        {"mulhu", Format::R},
-    {"mulw", Format::R},        {"or", Format::R},
-    {"ori", Format::I},         {"pause", Format::NONE},
-    {"rem", Format::R},         {"remu", Format::R},
-    {"remuw", Format::R},       {"remw", Format::R},
-    {"sb", Format::S},          {"sc.d", Format::R_ATOMIC},
-    {"sd", Format::S},          {"sh", Format::S},
-    {"sll", Format::R},         {"slli", Format::I_SHIFT},
-    {"slliw", Format::I_SHIFT}, {"sllw", Format::R},
-    {"slt", Format::R},         {"slti", Format::I},
-    {"sltiu", Format::I},       {"sltu", Format::R},
-    {"sra", Format::R},         {"srai", Format::I_SHIFT},
-    {"sraiw", Format::I_SHIFT}, {"sraw", Format::R},
-    {"srl", Format::R},         {"srli", Format::I_SHIFT},
-    {"srliw", Format::I_SHIFT}, {"srlw", Format::R},
-    {"sub", Format::R},         {"subw", Format::R},
-    {"sw", Format::S},          {"xor", Format::R},
+static constexpr std::array<OpDef, 103> OP_TABLE = {{
+    {"???", Format::NONE},
+    {"add", Format::R},
+    {"addi", Format::I},
+    {"addiw", Format::I},
+    {"addw", Format::R},
+    {"amoswap.d", Format::R_ATOMIC},
+    {"and", Format::R},
+    {"andi", Format::I},
+    {"auipc", Format::U},
+    {"beq", Format::B},
+    {"bge", Format::B},
+    {"bgeu", Format::B},
+    {"blt", Format::B},
+    {"bltu", Format::B},
+    {"bne", Format::B},
+    {"c.add", Format::CR},
+    {"c.addi", Format::CI},
+    {"c.addiw", Format::CI},
+    {"c.addi16sp", Format::CI},
+    {"c.addi4spn", Format::CI},
+    {"c.addw", Format::CR},
+    {"c.and", Format::CR},
+    {"c.andi", Format::CI},
+    {"c.beqz", Format::CB},
+    {"c.bnez", Format::CB},
+    {"c.ebreak", Format::NONE},
+    {"c.fldsp", Format::CSS},
+    {"c.j", Format::CJ},
+    {"c.jalr", Format::CR1},
+    {"c.jr", Format::CR1},
+    {"c.ld", Format::CL},
+    {"c.ldsp", Format::CL},
+    {"c.li", Format::CI},
+    {"c.lui", Format::CI},
+    {"c.lw", Format::CL},
+    {"c.mv", Format::CR},
+    {"c.or", Format::CR},
+    {"c.sd", Format::S},
+    {"c.sdsp", Format::CSS},
+    {"c.slli", Format::CI},
+    {"c.srai", Format::CI},
+    {"c.srli", Format::CI},
+    {"c.sub", Format::CR},
+    {"c.subw", Format::CR},
+    {"c.sw", Format::S},
+    {"c.swsp", Format::CSS},
+    {"c.xor", Format::CR},
+    {"div", Format::R},
+    {"divu", Format::R},
+    {"divuw", Format::R},
+    {"divw", Format::R},
+    {"ecall", Format::NONE},
+    {"fence", Format::NONE},
+    {"fence.tso", Format::NONE},
+    {"jal", Format::J},
+    {"jalr", Format::I},
+    {"lb", Format::I_LOAD},
+    {"lbu", Format::I_LOAD},
+    {"ld", Format::I_LOAD},
+    {"lh", Format::I_LOAD},
+    {"lhu", Format::I_LOAD},
+    {"lr.d", Format::R_ATOMIC_LR},
+    {"lr.w", Format::R_ATOMIC_LR},
+    {"lui", Format::U},
+    {"lw", Format::I_LOAD},
+    {"lwu", Format::I_LOAD},
+    {"mul", Format::R},
+    {"mulh", Format::R},
+    {"mulhu", Format::R},
+    {"mulw", Format::R},
+    {"or", Format::R},
+    {"ori", Format::I},
+    {"pause", Format::NONE},
+    {"rem", Format::R},
+    {"remu", Format::R},
+    {"remuw", Format::R},
+    {"remw", Format::R},
+    {"sb", Format::S},
+    {"sc.d", Format::R_ATOMIC},
+    {"sc.w", Format::R_ATOMIC},
+    {"sd", Format::S},
+    {"sh", Format::S},
+    {"sll", Format::R},
+    {"slli", Format::I_SHIFT},
+    {"slliw", Format::I_SHIFT},
+    {"sllw", Format::R},
+    {"slt", Format::R},
+    {"slti", Format::I},
+    {"sltiu", Format::I},
+    {"sltu", Format::R},
+    {"sra", Format::R},
+    {"srai", Format::I_SHIFT},
+    {"sraiw", Format::I_SHIFT},
+    {"sraw", Format::R},
+    {"srl", Format::R},
+    {"srli", Format::I_SHIFT},
+    {"srliw", Format::I_SHIFT},
+    {"srlw", Format::R},
+    {"sub", Format::R},
+    {"subw", Format::R},
+    {"sw", Format::S},
+    {"xor", Format::R},
     {"xori", Format::I},
 }};
 
@@ -549,6 +603,9 @@ public:
       case Op::C_MV: {
         m_regs[i.rd] = m_regs[i.rs2];
       }; break;
+      case Op::C_OR: {
+        m_regs[i.rd] |= m_regs[i.rs2];
+      }; break;
       case Op::C_SDSP: {
         u64 addr = sp + i.imm;
         *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
@@ -593,21 +650,38 @@ public:
       case Op::ECALL: {
         // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
         switch (m_regs[17]) {
+        case 29: { // ioctl
+          u32 fd = m_regs[10];
+          u32 cmd = m_regs[11];
+          u64 arg = m_regs[12];
+
+          switch (cmd) {
+          case 0x5413: { // TIOCGWINSZ
+            m_regs[10] = -ENOTTY;
+          }; break;
+          default: {
+            std::println(stderr, "ioctl(fd={}, cmd={}, arg={}) unimplemented",
+                         fd, cmd, arg);
+            exit(1);
+          }; break;
+          }
+        }; break;
         case 63: { // read
-          if (m_regs[10] != 0) {
+          u32 fd = m_regs[10];
+          u64 buf = m_regs[11];
+          u64 count = m_regs[12];
+
+          if (fd != 0) {
             std::println(stderr, "read syscall implemented only for stdin.");
             exit(1);
           }
 
-          u64 start = m_regs[11];
-          u64 count = m_regs[12];
           u64 bytes_read = 0;
-
           for (u64 i = 0; i < count; i++) {
             char c;
             if (!std::cin.get(c))
               break;
-            m_memory[start + i] = (u8)c;
+            m_memory[buf + i] = (u8)c;
             bytes_read++;
             if (c == '\n')
               break;
@@ -616,18 +690,47 @@ public:
           m_regs[10] = bytes_read;
         }; break;
         case 64: { // write
-          if (m_regs[10] != 1) {
+          u32 fd = m_regs[10];
+          u64 buf = m_regs[11];
+          u64 count = m_regs[12];
+
+          if (fd != 1) {
             std::println(stderr, "write syscall implemented only for stdout.");
             exit(1);
           }
 
-          u64 start = m_regs[11];
-          u64 end = m_regs[11] + m_regs[12];
-
-          for (u64 i = start; i < end; i++) {
+          u64 end = buf + count;
+          for (u64 i = buf; i < end; i++) {
             std::cout.put(m_memory[i]);
           }
+
+          m_regs[10] = count;
         }; break;
+        case 66: { // writev
+          u32 fd = m_regs[10];
+          u64 vec = m_regs[11];
+          u64 vlen = m_regs[12];
+
+          if (fd != 1) {
+            std::println(stderr, "writev syscall implemented only for stdout.");
+            exit(1);
+          }
+
+          u64 total_written = 0;
+          for (u64 i = 0; i < vlen; i++) {
+            u64 iov_entry = vec + i * 16;
+            u64 buf = *(u64 *)&m_memory[iov_entry];
+            u64 len = *(u64 *)&m_memory[iov_entry + 8];
+
+            for (u64 j = 0; j < len; j++) {
+              std::cout.put(m_memory[buf + j]);
+            }
+            total_written += len;
+          }
+
+          m_regs[10] = total_written;
+        } break;
+
         case 93:   // exit
         case 94: { // exit_group
           std::println("Program exited with code {}.", m_regs[10]);
@@ -1391,7 +1494,22 @@ private:
       i.rs1 = (raw >> 15) & 0b11111;
       i.rs2 = (raw >> 20) & 0b11111;
 
-      if (funct3 == 0b011) {
+      if (funct3 == 0b010) {
+        switch (funct7) {
+        case 0b00010: {
+          i.op = Op::LR_W;
+        }; break;
+        case 0b00011: {
+          i.op = Op::SC_W;
+        }; break;
+        default: {
+          std::println(stderr,
+                       "0101111: funct3=010: unrecognized funct7: {:05b}",
+                       funct7);
+          exit(1);
+        }; break;
+        }
+      } else if (funct3 == 0b011) {
         switch (funct7) {
         case 0b00001: {
           i.op = Op::AMOSWAP_D;
