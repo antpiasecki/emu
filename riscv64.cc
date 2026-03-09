@@ -55,19 +55,33 @@ enum Op {
   BLT,
   BLTU,
   BNE,
+  C_ADD,
   C_ADDI,
+  C_ADDIW,
   C_ADDI16SP,
   C_ADDI4SPN,
+  C_BEQZ,
+  C_BNEZ,
+  C_EBREAK,
+  C_FLDSP,
+  C_JALR,
+  C_LD,
+  C_LDSP,
   C_LI,
   C_LUI,
+  C_LW,
   C_MV,
+  C_SD,
   C_SDSP,
   C_SLLI,
+  C_SW,
   DIV,
   DIVU,
   DIVUW,
   DIVW,
   ECALL,
+  FENCE,
+  FENCE_TSO,
   JAL,
   JALR,
   LB,
@@ -75,6 +89,7 @@ enum Op {
   LD,
   LH,
   LHU,
+  LR_D,
   LUI,
   LW,
   LWU,
@@ -84,11 +99,13 @@ enum Op {
   MULW,
   OR,
   ORI,
+  PAUSE,
   REM,
   REMU,
   REMUW,
   REMW,
   SB,
+  SC_D,
   SD,
   SH,
   SLL,
@@ -116,6 +133,8 @@ enum Op {
 
 struct Ins {
   Op op;
+  u8 length;
+
   u8 rd;
   u8 rs1;
   union {
@@ -131,49 +150,117 @@ struct Section {
   u64 entrypoint;
 };
 
-enum class Format { NONE, R, I, I_LOAD, I_SHIFT, S, B, U, J, CI, CSS, CR };
+enum class Format {
+  NONE,
+  R,
+  I,
+  I_LOAD,
+  I_SHIFT,
+  S,
+  B,
+  U,
+  J,
+  CI,
+  CSS,
+  CR,
+  CL,
+  R_ATOMIC,
+  R_ATOMIC_LR
+};
 
 struct OpDef {
   const char *mnemonic;
   Format format;
 };
 
-static constexpr std::array<OpDef, 71> OP_TABLE = {{
-    {"???", Format::NONE},      {"add", Format::R},
-    {"addi", Format::I},        {"addiw", Format::I},
-    {"addw", Format::R},        {"and", Format::R},
-    {"andi", Format::I},        {"auipc", Format::U},
-    {"beq", Format::B},         {"bge", Format::B},
-    {"bgeu", Format::B},        {"blt", Format::B},
-    {"bltu", Format::B},        {"bne", Format::B},
-    {"c.addi", Format::CI},     {"c.addi16sp", Format::CI},
-    {"c.addi4spn", Format::CI}, {"c.li", Format::CI},
-    {"c.lui", Format::CI},      {"c.mv", Format::CR},
-    {"c.sdsp", Format::CSS},    {"c.slli", Format::CI},
-    {"div", Format::R},         {"divu", Format::R},
-    {"divuw", Format::R},       {"divw", Format::R},
-    {"ecall", Format::NONE},    {"jal", Format::J},
-    {"jalr", Format::I},        {"lb", Format::I_LOAD},
-    {"lbu", Format::I_LOAD},    {"ld", Format::I_LOAD},
-    {"lh", Format::I_LOAD},     {"lhu", Format::I_LOAD},
-    {"lui", Format::U},         {"lw", Format::I_LOAD},
-    {"lwu", Format::I_LOAD},    {"mul", Format::R},
-    {"mulh", Format::R},        {"mulhu", Format::R},
-    {"mulw", Format::R},        {"or", Format::R},
-    {"ori", Format::I},         {"rem", Format::R},
-    {"remu", Format::R},        {"remuw", Format::R},
-    {"remw", Format::R},        {"sb", Format::S},
-    {"sd", Format::S},          {"sh", Format::S},
-    {"sll", Format::R},         {"slli", Format::I_SHIFT},
-    {"slliw", Format::I_SHIFT}, {"sllw", Format::R},
-    {"slt", Format::R},         {"slti", Format::I},
-    {"sltiu", Format::I},       {"sltu", Format::R},
-    {"sra", Format::R},         {"srai", Format::I_SHIFT},
-    {"sraiw", Format::I_SHIFT}, {"sraw", Format::R},
-    {"srl", Format::R},         {"srli", Format::I_SHIFT},
-    {"srliw", Format::I_SHIFT}, {"srlw", Format::R},
-    {"sub", Format::R},         {"subw", Format::R},
-    {"sw", Format::S},          {"xor", Format::R},
+static constexpr std::array<OpDef, 88> OP_TABLE = {{
+    {"???", Format::NONE},
+    {"add", Format::R},
+    {"addi", Format::I},
+    {"addiw", Format::I},
+    {"addw", Format::R},
+    {"and", Format::R},
+    {"andi", Format::I},
+    {"auipc", Format::U},
+    {"beq", Format::B},
+    {"bge", Format::B},
+    {"bgeu", Format::B},
+    {"blt", Format::B},
+    {"bltu", Format::B},
+    {"bne", Format::B},
+    {"c.add", Format::CR},
+    {"c.addi", Format::CI},
+    {"c.addiw", Format::CI},
+    {"c.addi16sp", Format::CI},
+    {"c.addi4spn", Format::CI},
+    {"c.beqz", Format::B},
+    {"c.bnez", Format::B},
+    {"c.ebreak", Format::CR},
+    {"c.fldsp", Format::CSS},
+    {"c.jalr", Format::CR},
+    {"c.ld", Format::CL},
+    {"c.ldsp", Format::CL},
+    {"c.li", Format::CI},
+    {"c.lui", Format::CI},
+    {"c.lw", Format::CL},
+    {"c.mv", Format::CR},
+    {"c.sd", Format::S},
+    {"c.sdsp", Format::CSS},
+    {"c.slli", Format::CI},
+    {"c.sw", Format::S},
+    {"div", Format::R},
+    {"divu", Format::R},
+    {"divuw", Format::R},
+    {"divw", Format::R},
+    {"ecall", Format::NONE},
+    {"fence", Format::NONE},
+    {"fence.tso", Format::NONE},
+    {"jal", Format::J},
+    {"jalr", Format::I},
+    {"lb", Format::I_LOAD},
+    {"lbu", Format::I_LOAD},
+    {"ld", Format::I_LOAD},
+    {"lh", Format::I_LOAD},
+    {"lhu", Format::I_LOAD},
+    {"lr.d", Format::R_ATOMIC_LR},
+    {"lui", Format::U},
+    {"lw", Format::I_LOAD},
+    {"lwu", Format::I_LOAD},
+    {"mul", Format::R},
+    {"mulh", Format::R},
+    {"mulhu", Format::R},
+    {"mulw", Format::R},
+    {"or", Format::R},
+    {"ori", Format::I},
+    {"pause", Format::NONE},
+    {"rem", Format::R},
+    {"remu", Format::R},
+    {"remuw", Format::R},
+    {"remw", Format::R},
+    {"sb", Format::S},
+    {"sc.d", Format::R_ATOMIC},
+    {"sd", Format::S},
+    {"sh", Format::S},
+    {"sll", Format::R},
+    {"slli", Format::I_SHIFT},
+    {"slliw", Format::I_SHIFT},
+    {"sllw", Format::R},
+    {"slt", Format::R},
+    {"slti", Format::I},
+    {"sltiu", Format::I},
+    {"sltu", Format::R},
+    {"sra", Format::R},
+    {"srai", Format::I_SHIFT},
+    {"sraiw", Format::I_SHIFT},
+    {"sraw", Format::R},
+    {"srl", Format::R},
+    {"srli", Format::I_SHIFT},
+    {"srliw", Format::I_SHIFT},
+    {"srlw", Format::R},
+    {"sub", Format::R},
+    {"subw", Format::R},
+    {"sw", Format::S},
+    {"xor", Format::R},
     {"xori", Format::I},
 }};
 
@@ -210,26 +297,33 @@ public:
     }
     elf_end(elf);
 
-    u64 num_ins = m_code_section.size / 4;
+    u64 num_ins = m_code_section.size / 2;
     m_decoded.resize(num_ins);
-    for (u64 i = 0; i < num_ins; i++) {
+
+    u64 offset = 0;
+    while (offset < m_code_section.size) {
       u32 raw;
-      std::memcpy(&raw, m_memory + m_code_section.offset + i * 4, sizeof(raw));
-      m_decoded[i] = decode_raw(raw);
+      std::memcpy(&raw, m_memory + m_code_section.offset + offset, sizeof(raw));
+
+      Ins ins = decode_raw(raw);
+      ins.length = ((raw & 0b11) == 0b11) ? 4 : 2;
+      m_decoded[offset / 2] = ins;
+
+      offset += ins.length;
     }
   }
 
   ~RISCV64() { munmap(m_memory, MEMORY_SIZE); }
 
   void disassemble_all() {
-    for (m_pc = m_code_section.offset;
-         m_pc < m_code_section.offset + m_code_section.size; m_pc += 4) {
+    m_pc = m_code_section.offset;
+    while (m_pc < m_code_section.offset + m_code_section.size) {
       disassemble_one();
     }
   }
 
   void disassemble_one() {
-    Ins ins = m_decoded[(m_pc - m_code_section.offset) / 4];
+    Ins ins = m_decoded[(m_pc - m_code_section.offset) / 2];
 
     const OpDef &def = OP_TABLE[ins.op];
 
@@ -273,10 +367,23 @@ public:
     case Format::CR:
       std::println("{} {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs2]);
       break;
+    case Format::CL:
+      std::println("{} {}, {}({})", def.mnemonic, REGS[ins.rd], ins.imm,
+                   REGS[ins.rs1]);
+      break;
+    case Format::R_ATOMIC_LR:
+      std::println("{} {}, ({})", def.mnemonic, REGS[ins.rd], REGS[ins.rs1]);
+      break;
+    case Format::R_ATOMIC:
+      std::println("{} {}, {}, ({})", def.mnemonic, REGS[ins.rd], REGS[ins.rs2],
+                   REGS[ins.rs1]);
+      break;
     case Format::NONE:
       std::println("{}", def.mnemonic);
       break;
     }
+
+    m_pc += ins.length;
   }
 
   void dump() {
@@ -321,7 +428,7 @@ public:
     while (m_pc < MEMORY_SIZE) {
       m_regs[0] = 0; // clear the zero register
 
-      Ins i = m_decoded[(m_pc - m_code_section.offset) / 4];
+      Ins i = m_decoded[(m_pc - m_code_section.offset) / 2];
 
       switch (i.op) {
       case Op::INVALID: {
@@ -667,7 +774,7 @@ public:
       }; break;
       }
 
-      m_pc += 4;
+      m_pc += i.length;
     }
   }
 
@@ -736,6 +843,32 @@ private:
                 (((raw >> 6) & 0b1) << 2) | (((raw >> 5) & 0b1) << 3);
         i.op = Op::C_ADDI4SPN;
       }; break;
+      case 0b010: {
+        i.rd = ((raw >> 2) & 0b111) + 8;
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 6) & 0b1) << 2) |
+                (((raw >> 5) & 0b1) << 6);
+        i.op = Op::C_LW;
+      }; break;
+      case 0b011: {
+        i.rd = ((raw >> 2) & 0b111) + 8;
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 5) & 0b11) << 6);
+        i.op = Op::C_LD;
+      }; break;
+      case 0b110: {
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.rs2 = ((raw >> 2) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 6) & 0b1) << 2) |
+                (((raw >> 5) & 0b1) << 6);
+        i.op = Op::C_SW;
+      }; break;
+      case 0b111: {
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.rs2 = ((raw >> 2) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 5) & 0b11) << 6);
+        i.op = Op::C_SD;
+      }; break;
       default: {
         std::println(stderr, "C: opcode=00: unrecognized funct3: {:03b}",
                      funct3);
@@ -749,6 +882,12 @@ private:
         i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
         i.imm = (i.imm << 26) >> 26;
         i.op = Op::C_ADDI;
+      }; break;
+      case 0b001: {
+        i.rs1 = i.rd;
+        i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
+        i.imm = (i.imm << 26) >> 26;
+        i.op = Op::C_ADDIW;
       }; break;
       case 0b010: {
         i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
@@ -769,6 +908,24 @@ private:
         }
 
       }; break;
+      case 0b110: {
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.rs2 = 0;
+        i.imm = (((raw >> 12) & 0b1) << 8) | (((raw >> 10) & 0b11) << 3) |
+                (((raw >> 5) & 0b11) << 6) | (((raw >> 3) & 0b11) << 1) |
+                (((raw >> 2) & 0b1) << 5);
+        i.imm = (i.imm << 23) >> 23;
+        i.op = Op::C_BEQZ;
+      }; break;
+      case 0b111: {
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.rs2 = 0;
+        i.imm = (((raw >> 12) & 0b1) << 8) | (((raw >> 10) & 0b11) << 3) |
+                (((raw >> 5) & 0b11) << 6) | (((raw >> 3) & 0b11) << 1) |
+                (((raw >> 2) & 0b1) << 5);
+        i.imm = (i.imm << 23) >> 23;
+        i.op = Op::C_BNEZ;
+      }; break;
       default: {
         std::println(stderr, "C: opcode=01: unrecognized funct3: {:03b}",
                      funct3);
@@ -782,9 +939,18 @@ private:
         i.imm = ((raw >> 2) & 0b11111) | (((raw >> 12) & 0b1) << 5);
         i.op = Op::C_SLLI;
       }; break;
-      case 0b010: {
-        std::println(stderr, "F extension not implemented yet.");
-        exit(1);
+      case 0b001: {
+        i.rs1 = 2;
+        i.imm = (((raw >> 12) & 0b1) << 5) | (((raw >> 5) & 0b11) << 3) |
+                (((raw >> 2) & 0b111) << 6);
+        i.op = Op::C_FLDSP;
+      }; break;
+      case 0b011: {
+        i.rs1 = 2;
+        i.rd = (raw >> 7) & 0b11111;
+        i.imm = (((raw >> 12) & 0b1) << 5) | (((raw >> 5) & 0b11) << 3) |
+                (((raw >> 2) & 0b111) << 6);
+        i.op = Op::C_LDSP;
       }; break;
       case 0b100: {
         bool bit12 = (raw >> 12) & 0b1;
@@ -801,9 +967,19 @@ private:
             i.op = Op::C_MV;
           }
         } else {
-          std::println(stderr,
-                       "C: opcode=10: funct3=100: bit12=1: unimplemented");
-          exit(1);
+          if (i.rs2 == 0) {
+            if (i.rd == 0) {
+              i.op = Op::C_EBREAK;
+            } else {
+              i.rs1 = i.rd;
+              i.rd = 1;
+              i.imm = 0;
+              i.op = Op::C_JALR;
+            }
+          } else {
+            i.rs1 = i.rd;
+            i.op = Op::C_ADD;
+          }
         }
       }; break;
       case 0b111: {
@@ -1075,9 +1251,33 @@ private:
         exit(1);
       }
     }; break;
-    case 0b0101111:
-      std::println(stderr, "A extension not implemented yet.");
-      exit(1);
+    case 0b0101111: {
+      u8 funct3 = (raw >> 12) & 0b111;
+      u8 funct7 = (raw >> 27) & 0b11111;
+      i.rd = (raw >> 7) & 0b11111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+
+      if (funct3 == 0b011) {
+        switch (funct7) {
+        case 0b00010: {
+          i.op = Op::LR_D;
+        }; break;
+        case 0b00011: {
+          i.op = Op::SC_D;
+        }; break;
+        default: {
+          std::println(stderr,
+                       "0101111: funct3=011: unrecognized funct7: {:05b}",
+                       funct7);
+          exit(1);
+        }; break;
+        }
+      } else {
+        std::println(stderr, "0101111: unrecognized funct3: {:03b}", funct3);
+        exit(1);
+      }
+    }; break;
     case 0b0111011: {
       u8 funct3 = (raw >> 12) & 0b111;
       u8 funct7 = (u8)((raw >> 25) & 0b1111111);
@@ -1178,7 +1378,7 @@ private:
       } else if (funct3 == 0b011) {
         i.op = Op::SD;
       } else {
-        std::println(stderr, "S-type: unrecognized funct3: {:03b}", funct3);
+        std::println(stderr, "0100011: unrecognized funct3: {:03b}", funct3);
         exit(1);
       }
     }; break;
@@ -1191,6 +1391,23 @@ private:
       i.rd = (raw >> 7) & 0b11111;
       i.imm = raw >> 12;
       i.op = Op::AUIPC;
+    }; break;
+    case 0b0001111: {
+      u8 funct3 = (raw >> 12) & 0b111;
+      if (funct3 == 0b000) {
+        i.imm = (raw >> 20) & 0b111111111111;
+
+        if (i.imm == 0b000000010000) {
+          i.op = Op::PAUSE;
+        } else if (i.imm == 0b100000110011) {
+          i.op = Op::FENCE_TSO;
+        } else {
+          i.op = Op::FENCE;
+        }
+      } else {
+        std::println(stderr, "0001111: unrecognized funct3: {:03b}", funct3);
+        exit(1);
+      }
     }; break;
     default:
       std::println(stderr, "Unrecognized opcode: {:07b}", opcode);
