@@ -47,7 +47,13 @@ enum Op {
   ADDI,
   ADDIW,
   ADDW,
+  AMOADD_D,
+  AMOADD_W,
+  AMOMAXU_D,
+  AMOMAXU_W,
+  AMOOR_W,
   AMOSWAP_D,
+  AMOSWAP_W,
   AND,
   ANDI,
   AUIPC,
@@ -70,6 +76,7 @@ enum Op {
   C_EBREAK,
   C_FLD,
   C_FLDSP,
+  C_FSD,
   C_FSDSP,
   C_J,
   C_JALR,
@@ -99,12 +106,14 @@ enum Op {
   DIVUW,
   DIVW,
   ECALL,
+  FADD_D,
   FCLASS_D,
   FCVT_D_W,
   FCVT_D_WU,
   FENCE,
   FENCE_TSO,
   FLD,
+  FLW,
   FMUL_D,
   FMV_D_X,
   FMV_W_X,
@@ -113,6 +122,9 @@ enum Op {
   FSGNJ_D,
   FSGNJN_D,
   FSGNJX_D,
+  FSGNJ_S,
+  FSGNJN_S,
+  FSGNJX_S,
   FSW,
   JAL,
   JALR,
@@ -220,7 +232,13 @@ static constexpr auto OP_TABLE = std::to_array<OpDef>({
     {"addi", Format::I},
     {"addiw", Format::I},
     {"addw", Format::R},
+    {"amoadd.d", Format::R_ATOMIC},
+    {"amoadd.w", Format::R_ATOMIC},
+    {"amomaxu.d", Format::R_ATOMIC},
+    {"amomaxu.w", Format::R_ATOMIC},
+    {"amoor.w", Format::R_ATOMIC},
     {"amoswap.d", Format::R_ATOMIC},
+    {"amoswap.w", Format::R_ATOMIC},
     {"and", Format::R},
     {"andi", Format::I},
     {"auipc", Format::U},
@@ -243,6 +261,7 @@ static constexpr auto OP_TABLE = std::to_array<OpDef>({
     {"c.ebreak", Format::NONE},
     {"c.fld", Format::CL},
     {"c.fldsp", Format::CI},
+    {"c.fsd", Format::S},
     {"c.fsdsp", Format::CSS},
     {"c.j", Format::CJ},
     {"c.jalr", Format::CR1},
@@ -272,12 +291,14 @@ static constexpr auto OP_TABLE = std::to_array<OpDef>({
     {"divuw", Format::R},
     {"divw", Format::R},
     {"ecall", Format::NONE},
+    {"fadd.d", Format::R},
     {"fclass.d", Format::R},
     {"fcvt.d.w", Format::R},
     {"fcvt.d.wu", Format::R},
     {"fence", Format::NONE},
     {"fence.tso", Format::NONE},
     {"fld", Format::I},
+    {"flw", Format::I},
     {"fmul.d", Format::R},
     {"fmv.d.x", Format::R},
     {"fmv.x.d", Format::R},
@@ -287,6 +308,9 @@ static constexpr auto OP_TABLE = std::to_array<OpDef>({
     {"fsgnj.d", Format::R},
     {"fsgnjn.d", Format::R},
     {"fsgnjx.d", Format::R},
+    {"fsgnj.s", Format::R},
+    {"fsgnjn.s", Format::R},
+    {"fsgnjx.s", Format::R},
     {"jal", Format::J},
     {"jalr", Format::I},
     {"lb", Format::I_LOAD},
@@ -363,6 +387,7 @@ public:
     m_code_section = get_code_section(elf, ehdr);
     m_pc = m_code_section.offset;
 
+    u64 max_addr = 0;
     for (u64 i = 0; i < ehdr.e_phnum; i++) {
       GElf_Phdr phdr;
       gelf_getphdr(elf, i, &phdr);
@@ -370,9 +395,13 @@ public:
         // TODO: probably should disassemble all of those instead of just .text?
         std::copy_n(exe_bytes.data() + phdr.p_offset, phdr.p_filesz,
                     m_memory + phdr.p_vaddr);
+        max_addr = std::max(max_addr, phdr.p_vaddr + phdr.p_memsz);
       }
     }
     elf_end(elf);
+
+    m_brk = m_brk_base = (max_addr + 4095ULL) & ~4095ULL; // page align
+    m_next_mmap_addr = m_brk_base + 128 * 1024 * 1024;
 
     u64 num_ins = m_code_section.size / 2;
     m_decoded.resize(num_ins);
@@ -485,16 +514,15 @@ public:
   }
 
   void dump() {
-    std::print("REGS:");
     for (u64 i = 0; i < 32; i++) {
-      std::print(" {}", m_regs[i]);
+      std::print("{}=0x{:x} ", REGS[i], m_regs[i]);
     }
     std::println();
   }
 
-  void push_u64(u64 x) {
+  void push_u64(u64 v) {
     m_regs[2] -= 8;
-    *(u64 *)(m_memory + m_regs[2]) = x;
+    mem_write<u64>(m_regs[2], v);
   }
 
   void execute() {
@@ -552,7 +580,7 @@ public:
         m_regs[i.rd] = m_regs[i.rs1] & i.imm;
       }; break;
       case Op::AUIPC: {
-        m_regs[i.rd] = m_pc + ((i64)i.imm << 12);
+        m_regs[i.rd] = m_pc + (i64)(i32)((u32)i.imm << 12);
       }; break;
       case Op::BEQ: {
         if (m_regs[i.rs1] == m_regs[i.rs2]) {
@@ -626,26 +654,31 @@ public:
           continue;
         }
       }; break;
+      case Op::C_EBREAK: {
+        std::println(stderr, "EBREAK at pc=0x{:x}", m_pc);
+        dump();
+        exit(1);
+      }; break;
       case Op::C_J: {
         m_pc += i.imm;
         continue;
       }; break;
       case Op::C_JALR: {
         m_regs[1] = m_pc + 2;
-        m_pc = m_regs[i.rs1];
+        m_pc = m_regs[i.rs1] & ~1ULL;
         continue;
       }; break;
       case Op::C_JR: {
-        m_pc = m_regs[i.rs1];
+        m_pc = m_regs[i.rs1] & ~1ULL;
         continue;
       }; break;
       case Op::C_LD: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        m_regs[i.rd] = *(u64 *)&m_memory[addr];
+        m_regs[i.rd] = mem_read<u64>(addr);
       }; break;
       case Op::C_LDSP: {
         u64 addr = sp + i.imm;
-        m_regs[i.rd] = *(u64 *)(&m_memory[addr]);
+        m_regs[i.rd] = mem_read<u64>(addr);
       }; break;
       case Op::C_LI: {
         m_regs[i.rd] = i.imm;
@@ -655,7 +688,7 @@ public:
       }; break;
       case Op::C_LW: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        m_regs[i.rd] = (i64) * (i32 *)&m_memory[addr];
+        m_regs[i.rd] = (i64)mem_read<i32>(addr);
       }; break;
       case Op::C_MV: {
         m_regs[i.rd] = m_regs[i.rs2];
@@ -665,7 +698,7 @@ public:
       }; break;
       case Op::C_SDSP: {
         u64 addr = sp + i.imm;
-        *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
+        mem_write<u64>(addr, m_regs[i.rs2]);
       }; break;
       case Op::C_SLLI: {
         m_regs[i.rd] = (i64)((u64)m_regs[i.rd] << i.imm);
@@ -679,6 +712,20 @@ public:
       case Op::C_SUB: {
         m_regs[i.rd] -= m_regs[i.rs2];
       }; break;
+      case Op::C_SUBW: {
+        m_regs[i.rd] = (i32)(m_regs[i.rd] - m_regs[i.rs2]);
+      }; break;
+      case Op::C_SWSP: {
+        u64 addr = (u64)sp + (u64)i.imm;
+        mem_write<u32>(addr, m_regs[i.rs2]);
+      }; break;
+      case Op::C_LWSP: {
+        u64 addr = (u64)sp + (u64)i.imm;
+        m_regs[i.rd] = (i32)mem_read<u32>(addr);
+      }; break;
+      case Op::C_XOR: {
+        m_regs[i.rd] ^= m_regs[i.rs2];
+      }; break;
       case Op::DIV: {
         if (m_regs[i.rs2] == 0) {
           m_regs[i.rd] = -1;
@@ -686,9 +733,16 @@ public:
           m_regs[i.rd] = m_regs[i.rs1] / m_regs[i.rs2];
         }
       }; break;
+      case Op::DIVU: {
+        if ((u64)m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = -1;
+        } else {
+          m_regs[i.rd] = (i64)((u64)m_regs[i.rs1] / (u64)m_regs[i.rs2]);
+        }
+      }; break;
       case Op::DIVUW: {
-        if (m_regs[i.rs2] == 0) {
-          m_regs[i.rd] = -1LL;
+        if ((u32)m_regs[i.rs2] == 0) {
+          m_regs[i.rd] = -1;
         } else {
           m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] / (u32)m_regs[i.rs2]);
         }
@@ -706,6 +760,7 @@ public:
       }; break;
       case Op::ECALL: {
         // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
+        // ^ already got 2 syscalls wrong
         switch (m_regs[17]) {
         case 29: { // ioctl
           u32 fd = m_regs[10];
@@ -723,13 +778,26 @@ public:
           }; break;
           }
         }; break;
+        case 62: { // lseek
+          u32 fd = m_regs[10];
+          // i64 offset = m_regs[11];
+          // u32 whence = m_regs[12];
+
+          if (fd != 0) {
+            std::println(stderr, "lseek syscall implemented only for stdin");
+            exit(1);
+          }
+
+          // TODO
+          m_regs[10] = -ESPIPE;
+        }; break;
         case 63: { // read
           u32 fd = m_regs[10];
           u64 buf = m_regs[11];
           u64 count = m_regs[12];
 
           if (fd != 0) {
-            std::println(stderr, "read syscall implemented only for stdin.");
+            std::println(stderr, "read syscall implemented only for stdin");
             exit(1);
           }
 
@@ -776,8 +844,8 @@ public:
           u64 total_written = 0;
           for (u64 i = 0; i < vlen; i++) {
             u64 iov_entry = vec + i * 16;
-            u64 buf = *(u64 *)&m_memory[iov_entry];
-            u64 len = *(u64 *)&m_memory[iov_entry + 8];
+            u64 buf = mem_read<u64>(iov_entry);
+            u64 len = mem_read<u64>(iov_entry + 8);
 
             for (u64 j = 0; j < len; j++) {
               std::cout.put(m_memory[buf + j]);
@@ -817,6 +885,39 @@ public:
             m_regs[10] = -errno;
           }
         }; break;
+        case 214: { // brk
+          u64 brk = m_regs[10];
+
+          if (brk >= m_brk_base) {
+            m_brk = brk;
+          }
+          m_regs[10] = (i64)m_brk;
+        }; break;
+        case 222: { // mmap
+          u64 addr = m_regs[10];
+          u64 length = m_regs[11];
+          // i32 prot = m_regs[12];
+          i32 flags = m_regs[13];
+          // i32 fd = m_regs[14];
+          // i64 offset = m_regs[15];
+
+          if (!(flags & MAP_PRIVATE) || !(flags & MAP_ANONYMOUS)) {
+            std::println(
+                stderr,
+                "mmap implemented only for flags=(MAP_PRIVATE|MAP_ANONYMOUS)",
+                flags);
+            exit(1);
+          }
+
+          if (!(flags & MAP_FIXED)) {
+            length = (length + 4095) & ~4095;
+            addr = m_next_mmap_addr;
+            m_next_mmap_addr += length;
+          }
+
+          std::memset(m_memory + addr, 0, length);
+          m_regs[10] = addr;
+        }; break;
         default:
           std::println(stderr, "Unimplemented syscall: {}", m_regs[17]);
           exit(1);
@@ -840,16 +941,22 @@ public:
         m_regs[i.rd] = m_memory[m_regs[i.rs1] + i.imm];
       }; break;
       case Op::LD: {
-        m_regs[i.rd] = *(u64 *)&m_memory[m_regs[i.rs1] + i.imm];
+        m_regs[i.rd] = mem_read<u64>(m_regs[i.rs1] + i.imm);
       }; break;
       case Op::LH: {
-        m_regs[i.rd] = *(i16 *)&m_memory[m_regs[i.rs1] + i.imm];
+        m_regs[i.rd] = mem_read<i16>(m_regs[i.rs1] + i.imm);
+      }; break;
+      case Op::LHU: {
+        m_regs[i.rd] = mem_read<u16>(m_regs[i.rs1] + i.imm);
       }; break;
       case Op::LUI: {
-        m_regs[i.rd] = (i64)(i32)(i.imm << 12);
+        m_regs[i.rd] = (i64)(i32)((u32)i.imm << 12);
       }; break;
       case Op::LW: {
-        m_regs[i.rd] = *(i32 *)&m_memory[m_regs[i.rs1] + i.imm];
+        m_regs[i.rd] = mem_read<i32>(m_regs[i.rs1] + i.imm);
+      }; break;
+      case Op::LWU: {
+        m_regs[i.rd] = mem_read<u32>(m_regs[i.rs1] + i.imm);
       }; break;
       case Op::MUL: {
         m_regs[i.rd] = m_regs[i.rs1] * m_regs[i.rs2];
@@ -899,6 +1006,9 @@ public:
       case Op::OR: {
         m_regs[i.rd] = m_regs[i.rs1] | m_regs[i.rs2];
       }; break;
+      case Op::ORI: {
+        m_regs[i.rd] = m_regs[i.rs1] | (i64)i.imm;
+      }; break;
       case Op::REM: {
         if (m_regs[i.rs2] == 0) {
           m_regs[i.rd] = m_regs[i.rs1];
@@ -920,6 +1030,18 @@ public:
           m_regs[i.rd] = (i32)((u32)m_regs[i.rs1] % (u32)m_regs[i.rs2]);
         }
       }; break;
+      case Op::REMW: {
+        i32 a = (i32)m_regs[i.rs1];
+        i32 b = (i32)m_regs[i.rs2];
+
+        if (b == 0) {
+          m_regs[i.rd] = (i64)a;
+        } else if (a == INT32_MIN && b == -1) {
+          m_regs[i.rd] = 0;
+        } else {
+          m_regs[i.rd] = (i64)(a % b);
+        }
+      }; break;
       case Op::SB: {
         u64 addr = m_regs[i.rs1] + i.imm;
         m_memory[addr] = m_regs[i.rs2];
@@ -927,11 +1049,14 @@ public:
       case Op::SD:
       case Op::C_SD: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        *(u64 *)(&m_memory[addr]) = m_regs[i.rs2];
+        mem_write<u64>(addr, m_regs[i.rs2]);
       }; break;
       case Op::SH: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        *(u16 *)(&m_memory[addr]) = m_regs[i.rs2];
+        mem_write<u16>(addr, m_regs[i.rs2]);
+      }; break;
+      case Op::SLL: {
+        m_regs[i.rd] = (u64)m_regs[i.rs1] << ((u64)m_regs[i.rs2] & 0b111111);
       }; break;
       case Op::SLLI: {
         m_regs[i.rd] = m_regs[i.rs1] << i.shamt;
@@ -980,7 +1105,7 @@ public:
       case Op::C_SW:
       case Op::SW: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        *(u32 *)(&m_memory[addr]) = m_regs[i.rs2];
+        mem_write<u32>(addr, m_regs[i.rs2]);
       }; break;
       case Op::XOR: {
         m_regs[i.rd] = m_regs[i.rs1] ^ m_regs[i.rs2];
@@ -1004,6 +1129,9 @@ private:
   u64 m_pc;
   std::array<i64, 32> m_regs{};
   Section m_code_section;
+  u64 m_brk;
+  u64 m_brk_base;
+  u64 m_next_mmap_addr;
 
   static Section get_code_section(Elf *elf, GElf_Ehdr ehdr) {
     u64 str_table_index;
@@ -1053,15 +1181,15 @@ private:
       switch (funct3) {
       case 0b000: {
         if (raw == 0) {
-          std::println(stderr, "C: illegal instruction (all zeros)");
-          exit(1);
+          std::println(stderr, "Illegal instruction at 0x{:x} (all zeros)",
+                       m_pc);
+        } else {
+          i.rd = ((raw >> 2) & 0b111) + 8;
+          i.rs1 = 2;
+          i.imm = (((raw >> 11) & 0b11) << 4) | (((raw >> 7) & 0b1111) << 6) |
+                  (((raw >> 6) & 0b1) << 2) | (((raw >> 5) & 0b1) << 3);
+          i.op = Op::C_ADDI4SPN;
         }
-
-        i.rd = ((raw >> 2) & 0b111) + 8;
-        i.rs1 = 2;
-        i.imm = (((raw >> 11) & 0b11) << 4) | (((raw >> 7) & 0b1111) << 6) |
-                (((raw >> 6) & 0b1) << 2) | (((raw >> 5) & 0b1) << 3);
-        i.op = Op::C_ADDI4SPN;
       }; break;
       case 0b001: {
         i.rd = ((raw >> 2) & 0b111) + 8;
@@ -1081,6 +1209,12 @@ private:
         i.rs1 = ((raw >> 7) & 0b111) + 8;
         i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 5) & 0b11) << 6);
         i.op = Op::C_LD;
+      }; break;
+      case 0b101: {
+        i.rs2 = ((raw >> 2) & 0b111) + 8;
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 5) & 0b11) << 6);
+        i.op = Op::C_FSD;
       }; break;
       case 0b110: {
         i.rs1 = ((raw >> 7) & 0b111) + 8;
@@ -1589,11 +1723,23 @@ private:
 
       if (funct3 == 0b010) {
         switch (funct7) {
+        case 0b00000: {
+          i.op = Op::AMOADD_W;
+        }; break;
+        case 0b00001: {
+          i.op = Op::AMOSWAP_W;
+        }; break;
         case 0b00010: {
           i.op = Op::LR_W;
         }; break;
         case 0b00011: {
           i.op = Op::SC_W;
+        }; break;
+        case 0b01000: {
+          i.op = Op::AMOOR_W;
+        }; break;
+        case 0b11100: {
+          i.op = Op::AMOMAXU_W;
         }; break;
         default: {
           std::println(stderr,
@@ -1604,6 +1750,9 @@ private:
         }
       } else if (funct3 == 0b011) {
         switch (funct7) {
+        case 0b00000: {
+          i.op = Op::AMOADD_D;
+        }; break;
         case 0b00001: {
           i.op = Op::AMOSWAP_D;
         }; break;
@@ -1612,6 +1761,9 @@ private:
         }; break;
         case 0b00011: {
           i.op = Op::SC_D;
+        }; break;
+        case 0b11100: {
+          i.op = Op::AMOMAXU_D;
         }; break;
         default: {
           std::println(stderr,
@@ -1703,6 +1855,12 @@ private:
       u8 funct3 = (raw >> 12) & 0b111;
 
       switch (funct3) {
+      case 0b010: {
+        i.rd = (raw >> 7) & 0b11111;
+        i.rs1 = (raw >> 15) & 0b11111;
+        i.imm = (i32)raw >> 20;
+        i.op = Op::FLW;
+      }; break;
       case 0b011: {
         i.rd = (raw >> 7) & 0b11111;
         i.rs1 = (raw >> 15) & 0b11111;
@@ -1721,6 +1879,27 @@ private:
       i.rs2 = (raw >> 20) & 0b11111;
 
       switch (funct7) {
+      case 0b0000001: {
+        i.op = Op::FADD_D;
+      }; break;
+      case 0b0010000: {
+        switch (funct3) {
+        case 0b000:
+          i.op = Op::FSGNJ_S;
+          break;
+        case 0b001:
+          i.op = Op::FSGNJN_S;
+          break;
+        case 0b010:
+          i.op = Op::FSGNJX_S;
+          break;
+        default:
+          std::println(stderr,
+                       "1010011: funct7=0010000: unrecognized funct3: {:03b}",
+                       funct3);
+          exit(1);
+        }
+      }; break;
       case 0b1111001: {
         i.rs1 = (raw >> 15) & 0b11111;
         i.op = Op::FMV_D_X;
@@ -1863,6 +2042,15 @@ private:
     }
 
     return i;
+  }
+
+  template <typename T> T mem_read(u64 addr) {
+    T v;
+    std::memcpy(&v, m_memory + addr, sizeof(T));
+    return v;
+  }
+  template <typename T> void mem_write(u64 addr, T v) {
+    std::memcpy(m_memory + addr, &v, sizeof(T));
   }
 };
 
