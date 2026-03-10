@@ -1,5 +1,6 @@
 // https://docs.riscv.org/reference/isa/unpriv/rv-32-64g.html
 // https://riscv.org/wp-content/uploads/2024/12/riscv-calling.pdf
+// TODO: convert C instructions to normal ones at parse time?
 
 #if !defined(__cplusplus) || __cplusplus < 202302L
 #error "C++23 or later is required. Either get a newer compiler " \
@@ -7,11 +8,11 @@
        "instead of <print> and remove this check."
 #endif
 
+#include <cassert>
 #include <cstring>
 #include <fstream>
 #include <gelf.h>
 #include <iostream>
-#include <libelf.h>
 #include <print>
 #include <sys/mman.h>
 #include <sys/time.h>
@@ -67,7 +68,9 @@ enum Op {
   C_BEQZ,
   C_BNEZ,
   C_EBREAK,
+  C_FLD,
   C_FLDSP,
+  C_FSDSP,
   C_J,
   C_JALR,
   C_JR,
@@ -76,6 +79,7 @@ enum Op {
   C_LI,
   C_LUI,
   C_LW,
+  C_LWSP,
   C_MV,
   C_OR,
   C_SD,
@@ -88,13 +92,28 @@ enum Op {
   C_SW,
   C_SWSP,
   C_XOR,
+  CSRRS,
+  CSRRSI,
   DIV,
   DIVU,
   DIVUW,
   DIVW,
   ECALL,
+  FCLASS_D,
+  FCVT_D_W,
+  FCVT_D_WU,
   FENCE,
   FENCE_TSO,
+  FLD,
+  FMUL_D,
+  FMV_D_X,
+  FMV_W_X,
+  FMV_X_D,
+  FSD,
+  FSGNJ_D,
+  FSGNJN_D,
+  FSGNJX_D,
+  FSW,
   JAL,
   JALR,
   LB,
@@ -144,6 +163,8 @@ enum Op {
   SW,
   XOR,
   XORI,
+
+  NUM_OPS
 };
 
 struct Ins {
@@ -183,7 +204,9 @@ enum class Format {
   CR1,
   CL,
   R_ATOMIC,
-  R_ATOMIC_LR
+  R_ATOMIC_LR,
+  CSR,
+  CSRI
 };
 
 struct OpDef {
@@ -191,7 +214,7 @@ struct OpDef {
   Format format;
 };
 
-static constexpr std::array<OpDef, 103> OP_TABLE = {{
+static constexpr auto OP_TABLE = std::to_array<OpDef>({
     {"???", Format::NONE},
     {"add", Format::R},
     {"addi", Format::I},
@@ -218,7 +241,9 @@ static constexpr std::array<OpDef, 103> OP_TABLE = {{
     {"c.beqz", Format::CB},
     {"c.bnez", Format::CB},
     {"c.ebreak", Format::NONE},
-    {"c.fldsp", Format::CSS},
+    {"c.fld", Format::CL},
+    {"c.fldsp", Format::CI},
+    {"c.fsdsp", Format::CSS},
     {"c.j", Format::CJ},
     {"c.jalr", Format::CR1},
     {"c.jr", Format::CR1},
@@ -227,6 +252,7 @@ static constexpr std::array<OpDef, 103> OP_TABLE = {{
     {"c.li", Format::CI},
     {"c.lui", Format::CI},
     {"c.lw", Format::CL},
+    {"c.lwsp", Format::CL},
     {"c.mv", Format::CR},
     {"c.or", Format::CR},
     {"c.sd", Format::S},
@@ -239,13 +265,28 @@ static constexpr std::array<OpDef, 103> OP_TABLE = {{
     {"c.sw", Format::S},
     {"c.swsp", Format::CSS},
     {"c.xor", Format::CR},
+    {"csrrs", Format::CSR},
+    {"csrrsi", Format::CSRI},
     {"div", Format::R},
     {"divu", Format::R},
     {"divuw", Format::R},
     {"divw", Format::R},
     {"ecall", Format::NONE},
+    {"fclass.d", Format::R},
+    {"fcvt.d.w", Format::R},
+    {"fcvt.d.wu", Format::R},
     {"fence", Format::NONE},
     {"fence.tso", Format::NONE},
+    {"fld", Format::I},
+    {"fmul.d", Format::R},
+    {"fmv.d.x", Format::R},
+    {"fmv.x.d", Format::R},
+    {"fmv.w.x", Format::R},
+    {"fsw", Format::S},
+    {"fsd", Format::S},
+    {"fsgnj.d", Format::R},
+    {"fsgnjn.d", Format::R},
+    {"fsgnjx.d", Format::R},
     {"jal", Format::J},
     {"jalr", Format::I},
     {"lb", Format::I_LOAD},
@@ -295,7 +336,9 @@ static constexpr std::array<OpDef, 103> OP_TABLE = {{
     {"sw", Format::S},
     {"xor", Format::R},
     {"xori", Format::I},
-}};
+});
+
+static_assert(OP_TABLE.size() == NUM_OPS, "len(OP_TABLE) != len(Op::*)");
 
 class RISCV64 {
 public:
@@ -324,6 +367,7 @@ public:
       GElf_Phdr phdr;
       gelf_getphdr(elf, i, &phdr);
       if (phdr.p_type == PT_LOAD) {
+        // TODO: probably should disassemble all of those instead of just .text?
         std::copy_n(exe_bytes.data() + phdr.p_offset, phdr.p_filesz,
                     m_memory + phdr.p_vaddr);
       }
@@ -358,10 +402,18 @@ public:
     }
   }
 
+  // TODO: the registers in floating-point instructions should use the f0-f31
+  // registers but that would require rewriting a lot of stuff and its not gonna
+  // be a problem in execution so we'll live with that for now
   void disassemble_ins(Ins ins) {
+    assert((u64)ins.op < OP_TABLE.size());
+
     const OpDef &def = OP_TABLE[ins.op];
 
     switch (def.format) {
+    case Format::NONE:
+      std::println("{}", def.mnemonic);
+      break;
     case Format::R:
       std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], REGS[ins.rs1],
                    REGS[ins.rs2]);
@@ -421,8 +473,13 @@ public:
       std::println("{} {}, {}, ({})", def.mnemonic, REGS[ins.rd], REGS[ins.rs2],
                    REGS[ins.rs1]);
       break;
-    case Format::NONE:
-      std::println("{}", def.mnemonic);
+    case Format::CSR:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], ins.imm,
+                   REGS[ins.rs1]);
+      break;
+    case Format::CSRI:
+      std::println("{} {}, {}, {}", def.mnemonic, REGS[ins.rd], ins.imm,
+                   ins.rs1);
       break;
     }
   }
@@ -594,11 +651,11 @@ public:
         m_regs[i.rd] = i.imm;
       }; break;
       case Op::C_LUI: {
-        m_regs[i.rd] = (int64_t)(uint64_t)((int64_t)i.imm) << 12;
+        m_regs[i.rd] = (i64)(i32)((u32)i.imm << 12);
       }; break;
       case Op::C_LW: {
         u64 addr = m_regs[i.rs1] + i.imm;
-        m_regs[i.rd] = *(u32 *)&m_memory[addr];
+        m_regs[i.rd] = (i64) * (i32 *)&m_memory[addr];
       }; break;
       case Op::C_MV: {
         m_regs[i.rd] = m_regs[i.rs2];
@@ -798,31 +855,43 @@ public:
         m_regs[i.rd] = m_regs[i.rs1] * m_regs[i.rs2];
       }; break;
       case Op::MULH: {
-        i64 a_hi = m_regs[i.rs1] >> 32;
-        i64 b_hi = m_regs[i.rs2] >> 32;
-        u64 a_lo = (u32)m_regs[i.rs1];
-        u64 b_lo = (u32)m_regs[i.rs2];
-        u64 p0 = a_lo * b_lo;
-        i64 p1 = a_hi * b_lo;
-        i64 p2 = b_hi * a_lo;
-        i64 p3 = a_hi * b_hi;
-        i64 carry = (p0 >> 32);
-        i64 mid = p1 + p2 + carry;
-        m_regs[i.rd] = p3 + (mid >> 32);
+        i64 rs1 = m_regs[i.rs1];
+        i64 rs2 = m_regs[i.rs2];
+        u64 u = rs1;
+        u64 v = rs2;
+        u64 u0 = u & 0xffffffff;
+        u64 u1 = u >> 32;
+        u64 v0 = v & 0xffffffff;
+        u64 v1 = v >> 32;
+        u64 t = u0 * v0;
+        u64 k = t >> 32;
+        t = u1 * v0 + k;
+        u64 w1 = t & 0xffffffff;
+        u64 w2 = t >> 32;
+        t = u0 * v1 + w1;
+        k = t >> 32;
+        u64 res = u1 * v1 + w2 + k;
+        if (rs1 < 0)
+          res -= u64(rs2);
+        if (rs2 < 0)
+          res -= u64(rs1);
+        m_regs[i.rd] = (i64)res;
       }; break;
       case Op::MULHU: {
         u64 a = m_regs[i.rs1];
         u64 b = m_regs[i.rs2];
-        u64 a_lo = a & 0xffffffff;
-        u64 a_hi = a >> 32;
-        u64 b_lo = b & 0xffffffff;
-        u64 b_hi = b >> 32;
-        u64 lo_lo = a_lo * b_lo;
-        u64 hi_lo = a_hi * b_lo;
-        u64 lo_hi = a_lo * b_hi;
-        u64 hi_hi = a_hi * b_hi;
-        u64 mid = (lo_lo >> 32) + (hi_lo & 0xffffffff) + (lo_hi & 0xffffffff);
-        m_regs[i.rd] = hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (mid >> 32);
+        u64 a0 = a & 0xffffffff;
+        u64 a1 = a >> 32;
+        u64 b0 = b & 0xffffffff;
+        u64 b1 = b >> 32;
+        u64 t = a0 * b0;
+        u64 k = t >> 32;
+        t = a1 * b0 + k;
+        u64 w1 = t & 0xffffffff;
+        u64 w2 = t >> 32;
+        t = a0 * b1 + w1;
+        k = t >> 32;
+        m_regs[i.rd] = a1 * b1 + w2 + k;
       }; break;
       case Op::MULW: {
         m_regs[i.rd] = (i32)(m_regs[i.rs1] * m_regs[i.rs2]);
@@ -993,6 +1062,12 @@ private:
         i.imm = (((raw >> 11) & 0b11) << 4) | (((raw >> 7) & 0b1111) << 6) |
                 (((raw >> 6) & 0b1) << 2) | (((raw >> 5) & 0b1) << 3);
         i.op = Op::C_ADDI4SPN;
+      }; break;
+      case 0b001: {
+        i.rd = ((raw >> 2) & 0b111) + 8;
+        i.rs1 = ((raw >> 7) & 0b111) + 8;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 5) & 0b11) << 6);
+        i.op = Op::C_FLD;
       }; break;
       case 0b010: {
         i.rd = ((raw >> 2) & 0b111) + 8;
@@ -1176,6 +1251,12 @@ private:
                 (((raw >> 2) & 0b111) << 6);
         i.op = Op::C_FLDSP;
       }; break;
+      case 0b010: {
+        i.rs1 = 2;
+        i.imm = (((raw >> 2) & 0b11) << 6) | (((raw >> 12) & 0b1) << 5) |
+                (((raw >> 4) & 0b111) << 2);
+        i.op = Op::C_LWSP;
+      }; break;
       case 0b011: {
         i.rs1 = 2;
         i.imm = (((raw >> 12) & 0b1) << 5) | (((raw >> 5) & 0b11) << 3) |
@@ -1211,6 +1292,12 @@ private:
             i.op = Op::C_ADD;
           }
         }
+      }; break;
+      case 0b101: {
+        i.rs2 = (raw >> 2) & 0b11111;
+        i.rs1 = 2;
+        i.imm = (((raw >> 10) & 0b111) << 3) | (((raw >> 7) & 0b111) << 6);
+        i.op = Op::C_FSDSP;
       }; break;
       case 0b110: {
         i.rs2 = (raw >> 2) & 0b11111;
@@ -1290,8 +1377,7 @@ private:
         if (funct6 == 0b000000) {
           i.op = Op::SLLI;
         } else {
-          std::println(stderr,
-                       "I-type 1: funct3=001: unrecognized funct6: {:b}",
+          std::println(stderr, "0010011: funct3=001: unrecognized funct6: {:b}",
                        funct6);
           exit(1);
         }
@@ -1310,8 +1396,7 @@ private:
         } else if (funct6 == 0b010000) {
           i.op = Op::SRAI;
         } else {
-          std::println(stderr,
-                       "I-type 1: funct3=101: unrecognized funct6: {:b}",
+          std::println(stderr, "0010011: funct3=101: unrecognized funct6: {:b}",
                        funct6);
           exit(1);
         }
@@ -1320,7 +1405,7 @@ private:
       } else if (funct3 == 0b111) {
         i.op = Op::ANDI;
       } else {
-        std::println(stderr, "I-type 1: unrecognized funct3: {:03b}", funct3);
+        std::println(stderr, "0010011: unrecognized funct3: {:03b}", funct3);
         exit(1);
       }
     }; break;
@@ -1345,7 +1430,7 @@ private:
       } else if (funct3 == 0b110) {
         i.op = Op::LWU;
       } else {
-        std::println(stderr, "I-type 2: unrecognized funct3: {:03b}", funct3);
+        std::println(stderr, "0000011: unrecognized funct3: {:03b}", funct3);
         exit(1);
       }
     }; break;
@@ -1359,18 +1444,26 @@ private:
       u8 funct3 = (raw >> 12) & 0b111;
       i.rd = (raw >> 7) & 0b11111;
       i.rs1 = (raw >> 15) & 0b11111;
-      i.imm = ((i32)raw) >> 20;
+      i.imm = (raw >> 20) & 0b111111111111;
 
-      if (funct3 == 0b000) {
-        if (i.imm == 0b000000000000) {
+      switch (funct3) {
+      case 0b000: {
+        if (i.imm == 0) {
           i.op = Op::ECALL;
         } else {
-          std::println(stderr, "I-type 4: funct3=000 unrecognized imm: {:b}",
+          std::println(stderr, "1110011: funct3=000: unrecognized imm: {:b}",
                        i.imm);
           exit(1);
         }
-      } else {
-        std::println(stderr, "I-type 4: unrecognized funct3: {:03b}", funct3);
+      }; break;
+      case 0b010: {
+        i.op = Op::CSRRS;
+      }; break;
+      case 0b110: {
+        i.op = Op::CSRRSI;
+      }; break;
+      default:
+        std::println(stderr, "1110011: unrecognized funct3: {:03b}", funct3);
         exit(1);
       }
     }; break;
@@ -1607,12 +1700,113 @@ private:
       }
     }; break;
     case 0b0000111: {
-      std::println(stderr, "F extension not implemented yet.");
-      exit(1);
+      u8 funct3 = (raw >> 12) & 0b111;
+
+      switch (funct3) {
+      case 0b011: {
+        i.rd = (raw >> 7) & 0b11111;
+        i.rs1 = (raw >> 15) & 0b11111;
+        i.imm = (i32)raw >> 20;
+        i.op = Op::FLD;
+      }; break;
+      default:
+        std::println(stderr, "0000111: unrecognized funct3: {:03b}", funct3);
+        exit(1);
+      }
+    }; break;
+    case 0b1010011: {
+      u8 funct3 = (raw >> 12) & 0b111;
+      u8 funct7 = (raw >> 25) & 0b1111111;
+      i.rs1 = (raw >> 15) & 0b11111;
+      i.rs2 = (raw >> 20) & 0b11111;
+
+      switch (funct7) {
+      case 0b1111001: {
+        i.rs1 = (raw >> 15) & 0b11111;
+        i.op = Op::FMV_D_X;
+      }; break;
+      case 0b1101001: {
+        if (i.rs2 == 0b00000) {
+          i.op = Op::FCVT_D_W;
+        } else if (i.rs2 == 0b00001) {
+          i.op = Op::FCVT_D_WU;
+        } else {
+          std::println(
+              stderr, "1010011: funct7=1101001: unrecognized rs2: {:b}", i.rs2);
+          exit(1);
+        }
+      }; break;
+      case 0b0001001: {
+        i.op = Op::FMUL_D;
+      }; break;
+      case 0b0010001: {
+        switch (funct3) {
+        case 0b000:
+          i.op = Op::FSGNJ_D;
+          break;
+        case 0b001:
+          i.op = Op::FSGNJN_D;
+          break;
+        case 0b010:
+          i.op = Op::FSGNJX_D;
+          break;
+        default:
+          std::println(stderr,
+                       "1010011: funct7=0010001: unrecognized funct3: {:03b}",
+                       funct3);
+          exit(1);
+        }
+      }; break;
+      case 0b1110001: {
+        switch (funct3) {
+        case 0b000: {
+          i.op = Op::FMV_X_D;
+        }; break;
+        case 0b001: {
+          i.op = Op::FCLASS_D;
+        }; break;
+        default: {
+          std::println(stderr,
+                       "1010011: funct7=1110001: unrecognized funct3: {:03b}",
+                       funct3);
+          exit(1);
+        }; break;
+        }
+      }; break;
+      case 0b1111000: {
+        i.op = Op::FMV_W_X;
+      }; break;
+      default: {
+        std::println(stderr, "1010011: unrecognized funct7: {:07b}", funct7);
+        exit(1);
+      }; break;
+      }
     }; break;
     case 0b0100111: {
-      std::println(stderr, "F extension not implemented yet.");
-      exit(1);
+      u8 funct3 = (raw >> 12) & 0b111;
+
+      switch (funct3) {
+      case 0b010: {
+        i.rs1 = (raw >> 15) & 0b11111;
+        i.rs2 = (raw >> 20) & 0b11111;
+        i32 imm_hi = (i32)raw >> 25;
+        i32 imm_lo = (raw >> 7) & 0b11111;
+        i.imm = (imm_hi << 5) | imm_lo;
+        i.op = Op::FSW;
+      }; break;
+      case 0b011: {
+        i.rs1 = (raw >> 15) & 0b11111;
+        i.rs2 = (raw >> 20) & 0b11111;
+        i32 imm_hi = (i32)raw >> 25;
+        i32 imm_lo = (raw >> 7) & 0b11111;
+        i.imm = (imm_hi << 5) | imm_lo;
+        i.op = Op::FSD;
+      }; break;
+      default: {
+        std::println(stderr, "0100111: unrecognized funct3: {:03b}", funct3);
+        exit(1);
+      }; break;
+      }
     }; break;
     case 0b0100011: {
       u8 funct3 = (raw >> 12) & 0b111;
