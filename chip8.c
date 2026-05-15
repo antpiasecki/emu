@@ -345,7 +345,7 @@ void chip8_step(CHIP8 *c) {
       break;
     case 0x0A: {
       uint8_t key_pressed = 0;
-      while (!key_pressed && WindowShouldClose()) {
+      while (!key_pressed && !WindowShouldClose()) {
         for (size_t i = 0; i < 16; i++) {
           if (IsKeyDown(keyboard_map[i])) {
             key_pressed = 1;
